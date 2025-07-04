@@ -23,7 +23,7 @@ import {
 import { LogOut } from "lucide-react"
 import type { RequestData, ResponseData } from "@/types/api-studio"
 import type { User as AuthUser, Workspace } from "@/types/auth"
-import { getCurrentUser, signOut } from "@/lib/auth"
+import { getCurrentUser, signOut, isLocalEnvironment } from "@/lib/auth"
 import { toast } from "@/hooks/use-toast"
 import { HeroSection } from "@/components/landing/hero-section"
 
@@ -33,6 +33,8 @@ export default function APIStudio() {
   const [currentWorkspace, setCurrentWorkspace] = useState<Workspace | null>(null)
   const [loading, setLoading] = useState(true)
   const [showLanding, setShowLanding] = useState(true)
+
+  const isLocal = isLocalEnvironment()
 
   const {
     tabs,
@@ -59,12 +61,26 @@ export default function APIStudio() {
 
   useEffect(() => {
     if (user) {
-      fetchWorkspaces()
+      if (isLocal) {
+        // In local development, create a default workspace
+        const defaultWorkspace: Workspace = {
+          id: "local-workspace-123",
+          name: "Local Development",
+          description: "Default workspace for local development",
+          role: "owner",
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }
+        setWorkspaces([defaultWorkspace])
+        setCurrentWorkspace(defaultWorkspace)
+      } else {
+        fetchWorkspaces()
+      }
     }
   }, [user])
 
   useEffect(() => {
-    if (currentWorkspace) {
+    if (currentWorkspace && !isLocal) {
       fetchCollections()
       fetchEnvironments()
     }
@@ -74,6 +90,11 @@ export default function APIStudio() {
     const { user: currentUser } = await getCurrentUser()
     setUser(currentUser)
     setLoading(false)
+
+    // In local development, skip landing page
+    if (isLocal && currentUser) {
+      setShowLanding(false)
+    }
   }
 
   const fetchWorkspaces = async () => {
@@ -124,6 +145,10 @@ export default function APIStudio() {
     setUser(null)
     setWorkspaces([])
     setCurrentWorkspace(null)
+    if (isLocal) {
+      // In local development, reload to reset state
+      window.location.reload()
+    }
   }
 
   const updateActiveTab = (updates: Partial<typeof activeTab>) => {
@@ -221,8 +246,8 @@ export default function APIStudio() {
 
       updateActiveTab({ response: responseData })
 
-      // Save to history
-      if (currentWorkspace) {
+      // Save to history (skip in local development)
+      if (currentWorkspace && !isLocal) {
         await fetch(`/api/workspaces/${currentWorkspace.id}/history`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -257,6 +282,42 @@ export default function APIStudio() {
 
   const saveRequest = async (name: string, collectionId: string) => {
     if (!activeTab || !currentWorkspace) return
+
+    // In local development, simulate saving
+    if (isLocal) {
+      const savedRequest = {
+        id: Date.now().toString(),
+        name,
+        method: activeTab.request.method,
+        url: activeTab.request.url,
+        headers: activeTab.request.headers,
+        body: activeTab.request.body,
+        body_type: activeTab.request.bodyType,
+        form_data: activeTab.request.formData,
+        auth: activeTab.request.auth,
+        collection_id: collectionId,
+      }
+
+      setCollections((prev) =>
+        prev.map((collection) =>
+          collection.id === collectionId
+            ? { ...collection, requests: [...collection.requests, savedRequest] }
+            : collection,
+        ),
+      )
+
+      updateActiveTab({
+        originalRequest: { ...activeTab.request, id: savedRequest.id, name },
+        hasUnsavedChanges: false,
+        name,
+      })
+
+      toast({
+        title: "Request saved",
+        description: `Saved "${name}" to collection`,
+      })
+      return
+    }
 
     const requestToSave = {
       name,
@@ -382,17 +443,21 @@ export default function APIStudio() {
         <div className="border-b p-4 bg-muted/30">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-4">
-              <WorkspaceSelector
-                workspaces={workspaces}
-                currentWorkspace={currentWorkspace}
-                onWorkspaceChange={setCurrentWorkspace}
-                onWorkspaceCreate={(workspace) => {
-                  setWorkspaces([...workspaces, workspace])
-                  setCurrentWorkspace(workspace)
-                }}
-              />
-              <TeamManagement workspaceId={currentWorkspace.id} userRole={currentWorkspace.role || "member"} />
-              <NetworkSettings workspaceId={currentWorkspace.id} />
+              {!isLocal && (
+                <>
+                  <WorkspaceSelector
+                    workspaces={workspaces}
+                    currentWorkspace={currentWorkspace}
+                    onWorkspaceChange={setCurrentWorkspace}
+                    onWorkspaceCreate={(workspace) => {
+                      setWorkspaces([...workspaces, workspace])
+                      setCurrentWorkspace(workspace)
+                    }}
+                  />
+                  <TeamManagement workspaceId={currentWorkspace.id} userRole={currentWorkspace.role || "member"} />
+                  <NetworkSettings workspaceId={currentWorkspace.id} />
+                </>
+              )}
               {activeTab && (
                 <CodeGenerator request={activeTab.request} replaceEnvironmentVariables={replaceEnvironmentVariables} />
               )}
@@ -417,6 +482,7 @@ export default function APIStudio() {
                 <DropdownMenuItem className="flex-col items-start">
                   <div className="font-medium">{user.name}</div>
                   <div className="text-xs text-muted-foreground">{user.email}</div>
+                  {isLocal && <div className="text-xs text-green-600 font-medium">Local Development</div>}
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={handleSignOut}>
