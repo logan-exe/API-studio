@@ -25,12 +25,14 @@ import type { RequestData, ResponseData } from "@/types/api-studio"
 import type { User as AuthUser, Workspace } from "@/types/auth"
 import { getCurrentUser, signOut } from "@/lib/auth"
 import { toast } from "@/hooks/use-toast"
+import { HeroSection } from "@/components/landing/hero-section"
 
 export default function APIStudio() {
   const [user, setUser] = useState<AuthUser | null>(null)
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   const [currentWorkspace, setCurrentWorkspace] = useState<Workspace | null>(null)
   const [loading, setLoading] = useState(true)
+  const [showLanding, setShowLanding] = useState(true)
 
   const {
     tabs,
@@ -314,6 +316,10 @@ export default function APIStudio() {
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
       </div>
     )
+  }
+
+  if (!user && showLanding) {
+    return <HeroSection onGetStarted={() => setShowLanding(false)} />
   }
 
   if (!user) {
