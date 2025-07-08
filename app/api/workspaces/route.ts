@@ -87,6 +87,28 @@ export async function POST(request: NextRequest) {
 
     const { name, description } = await request.json()
 
+    // First, ensure the user exists in the users table
+    const { data: existingUser, error: userCheckError } = await supabase
+      .from("users")
+      .select("id")
+      .eq("id", user.id)
+      .single()
+
+    if (userCheckError || !existingUser) {
+      // Create the user record if it doesn't exist
+      const { error: userInsertError } = await supabase.from("users").insert({
+        id: user.id,
+        email: user.email,
+        name: user.user_metadata?.name || user.email?.split("@")[0] || "User",
+        avatar_url: user.user_metadata?.avatar_url,
+      })
+
+      if (userInsertError) {
+        console.error("Error creating user:", userInsertError)
+        return NextResponse.json({ error: "Failed to create user profile" }, { status: 500 })
+      }
+    }
+
     // Create workspace
     const { data: workspace, error: workspaceError } = await supabase
       .from("workspaces")
@@ -99,6 +121,7 @@ export async function POST(request: NextRequest) {
       .single()
 
     if (workspaceError) {
+      console.error("Error creating workspace:", workspaceError)
       return NextResponse.json({ error: workspaceError.message }, { status: 500 })
     }
 
@@ -110,13 +133,19 @@ export async function POST(request: NextRequest) {
     })
 
     if (memberError) {
+      console.error("Error adding workspace member:", memberError)
       return NextResponse.json({ error: memberError.message }, { status: 500 })
     }
 
     // Create default settings
-    await supabase.from("workspace_settings").insert({
+    const { error: settingsError } = await supabase.from("workspace_settings").insert({
       workspace_id: workspace.id,
     })
+
+    if (settingsError) {
+      console.error("Error creating workspace settings:", settingsError)
+      // Don't fail the request if settings creation fails
+    }
 
     return NextResponse.json({ ...workspace, role: "owner" })
   } catch (error) {
