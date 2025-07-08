@@ -6,6 +6,7 @@ import { WorkspaceSelector } from "@/components/workspace/workspace-selector"
 import { TeamManagement } from "@/components/workspace/team-management"
 import { CodeGenerator } from "@/components/code-generator/code-generator"
 import { NetworkSettings } from "@/components/settings/network-settings"
+import { GitHubIntegration } from "@/components/github/github-integration"
 import { useAPIStudio } from "@/hooks/use-api-studio"
 import { RequestTabs } from "@/components/request-tabs"
 import { Sidebar } from "@/components/sidebar"
@@ -25,20 +26,17 @@ import type { RequestData, ResponseData } from "@/types/api-studio"
 import type { User as AuthUser, Workspace } from "@/types/auth"
 import { getCurrentUser, signOut, isLocalEnvironment } from "@/lib/auth"
 import { toast } from "@/hooks/use-toast"
-import { HeroSection } from "@/components/landing/hero-section"
 import { WorkspaceSetup } from "@/components/workspace/workspace-setup"
 import { useTheme } from "next-themes"
-import { useRouter } from "next/navigation"
 
 export default function APIStudio() {
-  const router = useRouter()
   const [user, setUser] = useState<AuthUser | null>(null)
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   const [currentWorkspace, setCurrentWorkspace] = useState<Workspace | null>(null)
   const [loading, setLoading] = useState(true)
-  const [showLanding, setShowLanding] = useState(true)
   const [showAuth, setShowAuth] = useState(false)
   const [showWorkspaceSetup, setShowWorkspaceSetup] = useState(false)
+  const [showGitHub, setShowGitHub] = useState(false)
 
   const { theme, setTheme } = useTheme()
   const isLocal = isLocalEnvironment()
@@ -82,7 +80,6 @@ export default function APIStudio() {
       }
       setWorkspaces([anonymousWorkspace])
       setCurrentWorkspace(anonymousWorkspace)
-      setShowLanding(false)
     }
   }, [user])
 
@@ -103,11 +100,6 @@ export default function APIStudio() {
 
       setUser(currentUser)
       setLoading(false)
-
-      // In local development, skip landing page
-      if (isLocal && currentUser) {
-        setShowLanding(false)
-      }
     } catch (error) {
       console.error("Auth check failed:", error)
       setLoading(false)
@@ -125,16 +117,13 @@ export default function APIStudio() {
 
         if (data.workspaces && data.workspaces.length > 0) {
           setCurrentWorkspace(data.workspaces[0])
-          setShowLanding(false)
         } else {
           setShowWorkspaceSetup(true)
-          setShowLanding(false)
         }
       }
     } catch (error) {
       console.error("Failed to fetch workspaces:", error)
       setShowWorkspaceSetup(true)
-      setShowLanding(false)
     }
   }
 
@@ -182,7 +171,6 @@ export default function APIStudio() {
       setUser(null)
       setWorkspaces([])
       setCurrentWorkspace(null)
-      setShowLanding(true)
       setShowAuth(false)
       setShowWorkspaceSetup(false)
 
@@ -200,20 +188,6 @@ export default function APIStudio() {
         description: "An unexpected error occurred while signing out.",
         variant: "destructive",
       })
-    }
-  }
-
-  const handleGetStarted = () => {
-    if (user) {
-      if (workspaces.length > 0) {
-        router.push("/app")
-      } else {
-        setShowWorkspaceSetup(true)
-        setShowLanding(false)
-      }
-    } else {
-      // Allow anonymous usage
-      router.push("/app")
     }
   }
 
@@ -260,7 +234,10 @@ export default function APIStudio() {
 
     try {
       const url = replaceEnvironmentVariables(activeTab.request.url)
-      const headers: Record<string, string> = {}
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      }
 
       // Add enabled headers
       activeTab.request.headers.forEach((header) => {
@@ -286,18 +263,35 @@ export default function APIStudio() {
         headers,
       }
 
-      // Handle different body types
+      // Handle different body types - always convert to JSON
       if (["POST", "PUT", "PATCH"].includes(activeTab.request.method)) {
+        let bodyData: any = {}
+
         if (activeTab.request.bodyType === "json" && activeTab.request.body.trim()) {
-          headers["Content-Type"] = "application/json"
-          requestOptions.body = replaceEnvironmentVariables(activeTab.request.body)
-        } else if (activeTab.request.bodyType === "xml" && activeTab.request.body.trim()) {
-          headers["Content-Type"] = "application/xml"
-          requestOptions.body = replaceEnvironmentVariables(activeTab.request.body)
-        } else if (activeTab.request.bodyType === "text" && activeTab.request.body.trim()) {
-          headers["Content-Type"] = "text/plain"
-          requestOptions.body = replaceEnvironmentVariables(activeTab.request.body)
+          try {
+            bodyData = JSON.parse(replaceEnvironmentVariables(activeTab.request.body))
+          } catch (e) {
+            bodyData = { raw: replaceEnvironmentVariables(activeTab.request.body) }
+          }
+        } else if (activeTab.request.bodyType === "form-data") {
+          bodyData = {}
+          activeTab.request.formData.forEach((field) => {
+            if (field.key.trim()) {
+              bodyData[field.key] = field.type === "file" ? field.file?.name || field.value : field.value
+            }
+          })
+        } else if (activeTab.request.bodyType === "x-www-form-urlencoded") {
+          bodyData = {}
+          activeTab.request.formData.forEach((field) => {
+            if (field.key.trim()) {
+              bodyData[field.key] = field.value
+            }
+          })
+        } else if (activeTab.request.body.trim()) {
+          bodyData = { raw: replaceEnvironmentVariables(activeTab.request.body) }
         }
+
+        requestOptions.body = JSON.stringify(bodyData)
       }
 
       const response = await fetch(url, requestOptions)
@@ -308,7 +302,19 @@ export default function APIStudio() {
         responseHeaders[key] = value
       })
 
-      const responseText = await response.text()
+      let responseText = await response.text()
+      let responseBody: any
+
+      // Try to parse as JSON, fallback to text
+      try {
+        responseBody = JSON.parse(responseText)
+        responseText = JSON.stringify(responseBody, null, 2)
+      } catch (e) {
+        // If not JSON, wrap in JSON structure
+        responseBody = { raw: responseText }
+        responseText = JSON.stringify(responseBody, null, 2)
+      }
+
       const responseSize = new Blob([responseText]).size
 
       const responseData: ResponseData = {
@@ -374,19 +380,32 @@ export default function APIStudio() {
       return
     }
 
+    // Convert request to JSON format
+    const requestData = {
+      name,
+      method: activeTab.request.method,
+      url: activeTab.request.url,
+      headers: activeTab.request.headers.reduce(
+        (acc, header) => {
+          if (header.enabled && header.key.trim()) {
+            acc[header.key] = header.value
+          }
+          return acc
+        },
+        {} as Record<string, string>,
+      ),
+      body: activeTab.request.body ? JSON.parse(activeTab.request.body || "{}") : {},
+      auth: activeTab.request.auth,
+      collection_id: collectionId,
+    }
+
     // For anonymous users or local development, simulate saving
     if (!user || currentWorkspace.id === "anonymous-workspace" || isLocal) {
       const savedRequest = {
         id: Date.now().toString(),
-        name,
-        method: activeTab.request.method,
-        url: activeTab.request.url,
-        headers: activeTab.request.headers,
-        body: activeTab.request.body,
+        ...requestData,
         body_type: activeTab.request.bodyType,
         form_data: activeTab.request.formData,
-        auth: activeTab.request.auth,
-        collection_id: collectionId,
       }
 
       setCollections((prev) =>
@@ -410,23 +429,11 @@ export default function APIStudio() {
       return
     }
 
-    const requestToSave = {
-      name,
-      method: activeTab.request.method,
-      url: activeTab.request.url,
-      headers: activeTab.request.headers,
-      body: activeTab.request.body,
-      body_type: activeTab.request.bodyType,
-      form_data: activeTab.request.formData,
-      auth: activeTab.request.auth,
-      collection_id: collectionId,
-    }
-
     try {
       const response = await fetch(`/api/workspaces/${currentWorkspace.id}/requests`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(requestToSave),
+        body: JSON.stringify(requestData),
       })
 
       if (!response.ok) {
@@ -498,10 +505,6 @@ export default function APIStudio() {
     )
   }
 
-  if (showLanding) {
-    return <HeroSection onGetStarted={handleGetStarted} />
-  }
-
   if (showAuth) {
     return <AuthForm onSuccess={checkAuth} />
   }
@@ -527,6 +530,22 @@ export default function APIStudio() {
           setShowWorkspaceSetup(false)
         }}
         onSignIn={() => setShowAuth(true)}
+      />
+    )
+  }
+
+  if (showGitHub) {
+    return (
+      <GitHubIntegration
+        workspace={currentWorkspace}
+        onClose={() => setShowGitHub(false)}
+        onCollectionImported={(collection) => {
+          setCollections((prev) => [...prev, collection])
+          toast({
+            title: "Collection Imported",
+            description: `Successfully imported ${collection.name} from GitHub`,
+          })
+        }}
       />
     )
   }
@@ -641,6 +660,10 @@ export default function APIStudio() {
               {activeTab && (
                 <CodeGenerator request={activeTab.request} replaceEnvironmentVariables={replaceEnvironmentVariables} />
               )}
+              <Button variant="outline" onClick={() => setShowGitHub(true)}>
+                <Github className="w-4 h-4 mr-2" />
+                GitHub
+              </Button>
             </div>
 
             <div className="flex items-center space-x-2">
@@ -673,9 +696,9 @@ export default function APIStudio() {
                       <User className="mr-2 h-4 w-4" />
                       <span>Profile</span>
                     </DropdownMenuItem>
-                    <DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => setShowGitHub(true)}>
                       <Github className="mr-2 h-4 w-4" />
-                      <span>Connect GitHub</span>
+                      <span>GitHub Integration</span>
                     </DropdownMenuItem>
                     <DropdownMenuItem onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
                       {theme === "dark" ? (
@@ -715,6 +738,10 @@ export default function APIStudio() {
                     <DropdownMenuItem onClick={() => setShowAuth(true)}>
                       <User className="mr-2 h-4 w-4" />
                       <span>Sign In</span>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => setShowGitHub(true)}>
+                      <Github className="mr-2 h-4 w-4" />
+                      <span>GitHub Integration</span>
                     </DropdownMenuItem>
                     <DropdownMenuItem onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
                       {theme === "dark" ? (
