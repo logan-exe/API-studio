@@ -1,155 +1,115 @@
-import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs"
-import { cookies } from "next/headers"
 import { type NextRequest, NextResponse } from "next/server"
+import { createClient } from "@supabase/supabase-js"
 
-// Check if we're in local development
-const isLocal = process.env.NODE_ENV === "development" || process.env.NEXT_PUBLIC_VERCEL_ENV === "development"
+const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!)
 
-// Dummy data for local development
-const DUMMY_WORKSPACES = [
-  {
-    id: "local-workspace-123",
-    name: "Local Development",
-    description: "Default workspace for local development",
-    owner_id: "local-user-123",
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-    role: "owner",
-  },
-]
-
-export async function GET() {
-  // Handle local development
-  if (isLocal) {
-    return NextResponse.json(DUMMY_WORKSPACES)
-  }
-
+export async function GET(request: NextRequest) {
   try {
-    const cookieStore = cookies()
-    const supabase = createRouteHandlerClient({ cookies: () => cookieStore })
+    const { searchParams } = new URL(request.url)
+    const userId = searchParams.get("userId")
 
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser()
-
-    if (authError || !user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    if (!userId) {
+      return NextResponse.json({ error: "User ID is required" }, { status: 400 })
     }
 
+    // Check if user exists in users table, create if not
+    const { data: existingUser, error: userCheckError } = await supabase
+      .from("users")
+      .select("id")
+      .eq("id", userId)
+      .single()
+
+    if (userCheckError && userCheckError.code === "PGRST116") {
+      // User doesn't exist, create user profile
+      const { error: createUserError } = await supabase.from("users").insert({
+        id: userId,
+        email: `user-${userId}@example.com`, // You might want to get actual email
+        name: `User ${userId}`,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+
+      if (createUserError) {
+        console.error("Error creating user:", createUserError)
+        return NextResponse.json({ error: "Failed to create user profile" }, { status: 500 })
+      }
+    }
+
+    // Fetch workspaces for the user
     const { data: workspaces, error } = await supabase
       .from("workspaces")
-      .select(`
-        *,
-        workspace_members!inner(role)
-      `)
-      .eq("workspace_members.user_id", user.id)
+      .select("*")
+      .eq("owner_id", userId)
+      .order("created_at", { ascending: false })
 
     if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 })
+      console.error("Error fetching workspaces:", error)
+      return NextResponse.json({ error: "Failed to fetch workspaces" }, { status: 500 })
     }
 
-    return NextResponse.json(workspaces)
+    return NextResponse.json({ workspaces: workspaces || [] })
   } catch (error) {
-    console.error("Error fetching workspaces:", error)
+    console.error("Error in GET /api/workspaces:", error)
     return NextResponse.json({ error: "Internal server error" }, { status: 500 })
   }
 }
 
 export async function POST(request: NextRequest) {
-  // Handle local development
-  if (isLocal) {
-    const { name, description } = await request.json()
-    const newWorkspace = {
-      id: `local-workspace-${Date.now()}`,
-      name,
-      description,
-      owner_id: "local-user-123",
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-      role: "owner",
-    }
-    return NextResponse.json(newWorkspace)
-  }
-
   try {
-    const cookieStore = cookies()
-    const supabase = createRouteHandlerClient({ cookies: () => cookieStore })
+    const body = await request.json()
+    const { name, description, owner_id } = body
 
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser()
-
-    if (authError || !user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    if (!name || !owner_id) {
+      return NextResponse.json({ error: "Name and owner_id are required" }, { status: 400 })
     }
 
-    const { name, description } = await request.json()
-
-    // First, ensure the user exists in the users table
+    // Check if user exists in users table, create if not
     const { data: existingUser, error: userCheckError } = await supabase
       .from("users")
       .select("id")
-      .eq("id", user.id)
+      .eq("id", owner_id)
       .single()
 
-    if (userCheckError || !existingUser) {
-      // Create the user record if it doesn't exist
-      const { error: userInsertError } = await supabase.from("users").insert({
-        id: user.id,
-        email: user.email,
-        name: user.user_metadata?.name || user.email?.split("@")[0] || "User",
-        avatar_url: user.user_metadata?.avatar_url,
+    if (userCheckError && userCheckError.code === "PGRST116") {
+      // User doesn't exist, create user profile
+      const { error: createUserError } = await supabase.from("users").insert({
+        id: owner_id,
+        email: `user-${owner_id}@example.com`, // You might want to get actual email
+        name: `User ${owner_id}`,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
       })
 
-      if (userInsertError) {
-        console.error("Error creating user:", userInsertError)
+      if (createUserError) {
+        console.error("Error creating user:", createUserError)
         return NextResponse.json({ error: "Failed to create user profile" }, { status: 500 })
       }
+    } else if (userCheckError) {
+      console.error("Error checking user:", userCheckError)
+      return NextResponse.json({ error: "Failed to verify user" }, { status: 500 })
     }
 
-    // Create workspace
-    const { data: workspace, error: workspaceError } = await supabase
+    // Create the workspace
+    const { data: workspace, error } = await supabase
       .from("workspaces")
       .insert({
         name,
-        description,
-        owner_id: user.id,
+        description: description || "",
+        owner_id,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
       })
       .select()
       .single()
 
-    if (workspaceError) {
-      console.error("Error creating workspace:", workspaceError)
-      return NextResponse.json({ error: workspaceError.message }, { status: 500 })
+    if (error) {
+      console.error("Error creating workspace:", error)
+      return NextResponse.json({ error: "Failed to create workspace" }, { status: 500 })
     }
 
-    // Add owner as member
-    const { error: memberError } = await supabase.from("workspace_members").insert({
-      workspace_id: workspace.id,
-      user_id: user.id,
-      role: "owner",
-    })
-
-    if (memberError) {
-      console.error("Error adding workspace member:", memberError)
-      return NextResponse.json({ error: memberError.message }, { status: 500 })
-    }
-
-    // Create default settings
-    const { error: settingsError } = await supabase.from("workspace_settings").insert({
-      workspace_id: workspace.id,
-    })
-
-    if (settingsError) {
-      console.error("Error creating workspace settings:", settingsError)
-      // Don't fail the request if settings creation fails
-    }
-
-    return NextResponse.json({ ...workspace, role: "owner" })
+    return NextResponse.json({ workspace }, { status: 201 })
   } catch (error) {
-    console.error("Error creating workspace:", error)
+    console.error("Error in POST /api/workspaces:", error)
     return NextResponse.json({ error: "Internal server error" }, { status: 500 })
   }
 }

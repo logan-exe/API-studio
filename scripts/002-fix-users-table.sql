@@ -1,58 +1,54 @@
--- Ensure users table exists and has proper structure
+-- Create users table if it doesn't exist
 CREATE TABLE IF NOT EXISTS users (
-    id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
-    email TEXT NOT NULL,
-    name TEXT,
+    id UUID PRIMARY KEY,
+    email VARCHAR(255) UNIQUE NOT NULL,
+    name VARCHAR(255),
     avatar_url TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Create or replace function to automatically create user profile
-CREATE OR REPLACE FUNCTION public.handle_new_user()
+-- Create or replace function to handle user creation
+CREATE OR REPLACE FUNCTION handle_new_user()
 RETURNS TRIGGER AS $$
 BEGIN
     INSERT INTO public.users (id, email, name, avatar_url)
     VALUES (
         NEW.id,
         NEW.email,
-        COALESCE(NEW.raw_user_meta_data->>'name', split_part(NEW.email, '@', 1)),
+        COALESCE(NEW.raw_user_meta_data->>'name', NEW.email),
         NEW.raw_user_meta_data->>'avatar_url'
-    );
+    )
+    ON CONFLICT (id) DO UPDATE SET
+        email = EXCLUDED.email,
+        name = COALESCE(EXCLUDED.name, users.name),
+        avatar_url = COALESCE(EXCLUDED.avatar_url, users.avatar_url),
+        updated_at = NOW();
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- Create trigger to automatically create user profile on signup
+-- Create trigger for automatic user creation (if using Supabase Auth)
 DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 CREATE TRIGGER on_auth_user_created
     AFTER INSERT ON auth.users
-    FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
+    FOR EACH ROW EXECUTE FUNCTION handle_new_user();
 
--- Update existing users table if needed
-DO $$
-BEGIN
-    -- Add any missing columns
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'created_at') THEN
-        ALTER TABLE users ADD COLUMN created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
-    END IF;
-    
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'updated_at') THEN
-        ALTER TABLE users ADD COLUMN updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
-    END IF;
-END $$;
+-- Update existing workspaces table to ensure proper foreign key
+ALTER TABLE workspaces 
+DROP CONSTRAINT IF EXISTS workspaces_owner_id_fkey;
 
--- Create updated_at trigger for users table
-CREATE OR REPLACE FUNCTION update_updated_at_column()
-RETURNS TRIGGER AS $$
-BEGIN
-    NEW.updated_at = NOW();
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
+ALTER TABLE workspaces 
+ADD CONSTRAINT workspaces_owner_id_fkey 
+FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE;
 
-DROP TRIGGER IF EXISTS update_users_updated_at ON users;
-CREATE TRIGGER update_users_updated_at
-    BEFORE UPDATE ON users
-    FOR EACH ROW
-    EXECUTE FUNCTION update_updated_at_column();
+-- Create indexes for better performance
+CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+CREATE INDEX IF NOT EXISTS idx_workspaces_owner_id ON workspaces(owner_id);
+CREATE INDEX IF NOT EXISTS idx_workspaces_created_at ON workspaces(created_at);
+
+-- Insert some sample users for development
+INSERT INTO users (id, email, name, created_at, updated_at) VALUES
+    ('00000000-0000-0000-0000-000000000001', 'demo@example.com', 'Demo User', NOW(), NOW()),
+    ('00000000-0000-0000-0000-000000000002', 'test@example.com', 'Test User', NOW(), NOW())
+ON CONFLICT (id) DO NOTHING;
