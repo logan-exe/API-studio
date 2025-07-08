@@ -1,56 +1,71 @@
 import { type NextRequest, NextResponse } from "next/server"
 
-// Mock settings data for local development
-const mockSettings = {
+// Check if we're in local development
+const isLocal = process.env.NODE_ENV === "development" || process.env.NEXT_PUBLIC_VERCEL_ENV === "development"
+
+// Mock settings for local development
+const MOCK_SETTINGS = {
+  id: "local-settings-123",
+  workspace_id: "local-workspace-123",
+  proxy_enabled: false,
+  proxy_host: "",
+  proxy_port: 8080,
+  proxy_username: "",
+  proxy_password: "",
+  ssl_verification: true,
   timeout: 30000,
-  followRedirects: true,
-  validateSSL: true,
-  maxRedirects: 5,
-  userAgent: "API Studio/1.0",
-  proxy: {
-    enabled: false,
-    host: "",
-    port: 8080,
-    username: "",
-    password: "",
-  },
+  follow_redirects: true,
+  max_redirects: 5,
 }
 
 export async function GET(request: NextRequest, { params }: { params: { workspaceId: string } }) {
   try {
-    const { workspaceId } = params
-
-    // In local development, return mock data
-    if (process.env.NODE_ENV === "development") {
-      return NextResponse.json(mockSettings)
+    if (isLocal) {
+      return NextResponse.json(MOCK_SETTINGS)
     }
 
-    // In production, you would fetch from database
-    // const settings = await getWorkspaceSettings(workspaceId)
+    // In production, this would fetch from Supabase
+    // const { data, error } = await supabase
+    //   .from('workspace_settings')
+    //   .select('*')
+    //   .eq('workspace_id', params.workspaceId)
+    //   .single()
 
-    return NextResponse.json(mockSettings)
+    // if (error) {
+    //   return NextResponse.json({ error: error.message }, { status: 500 })
+    // }
+
+    return NextResponse.json(MOCK_SETTINGS)
   } catch (error) {
-    console.error("Failed to fetch settings:", error)
-    return NextResponse.json({ error: "Failed to fetch settings" }, { status: 500 })
+    console.error("Error fetching settings:", error)
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
   }
 }
 
 export async function PUT(request: NextRequest, { params }: { params: { workspaceId: string } }) {
   try {
-    const { workspaceId } = params
     const settings = await request.json()
 
-    // In local development, just return the settings
-    if (process.env.NODE_ENV === "development") {
-      return NextResponse.json({ ...mockSettings, ...settings })
+    if (isLocal) {
+      // In local development, just return the updated settings
+      return NextResponse.json({ ...MOCK_SETTINGS, ...settings })
     }
 
-    // In production, you would save to database
-    // await updateWorkspaceSettings(workspaceId, settings)
+    // In production, this would update Supabase
+    // const { data, error } = await supabase
+    //   .from('workspace_settings')
+    //   .update(settings)
+    //   .eq('workspace_id', params.workspaceId)
+    //   .select()
+    //   .single()
 
-    return NextResponse.json({ ...mockSettings, ...settings })
+    // if (error) {
+    //   return NextResponse.json({ error: error.message }, { status: 500 })
+    // }
+
+    return NextResponse.json({ ...MOCK_SETTINGS, ...settings })
   } catch (error) {
-    console.error("Failed to update settings:", error)
-    return NextResponse.json({ error: "Failed to update settings" }, { status: 500 })
+    console.error("Error updating settings:", error)
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
   }
 }

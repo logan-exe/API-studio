@@ -20,12 +20,13 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { LogOut } from "lucide-react"
+import { LogOut, Moon, Sun, User } from "lucide-react"
 import type { RequestData, ResponseData } from "@/types/api-studio"
 import type { User as AuthUser, Workspace } from "@/types/auth"
 import { getCurrentUser, signOut, isLocalEnvironment } from "@/lib/auth"
 import { toast } from "@/hooks/use-toast"
 import { HeroSection } from "@/components/landing/hero-section"
+import { useTheme } from "next-themes"
 
 export default function APIStudio() {
   const [user, setUser] = useState<AuthUser | null>(null)
@@ -34,6 +35,7 @@ export default function APIStudio() {
   const [loading, setLoading] = useState(true)
   const [showLanding, setShowLanding] = useState(true)
 
+  const { theme, setTheme } = useTheme()
   const isLocal = isLocalEnvironment()
 
   const {
@@ -91,11 +93,7 @@ export default function APIStudio() {
       const { user: currentUser, error } = await getCurrentUser()
 
       if (error) {
-        toast({
-          title: "Authentication Error",
-          description: error.message || "Failed to check authentication status.",
-          variant: "destructive",
-        })
+        console.error("Auth error:", error)
       }
 
       setUser(currentUser)
@@ -104,17 +102,9 @@ export default function APIStudio() {
       // In local development, skip landing page
       if (isLocal && currentUser) {
         setShowLanding(false)
-        toast({
-          title: "Local Development Mode",
-          description: "You're running in local development mode with a demo user.",
-        })
       }
     } catch (error) {
-      toast({
-        title: "Connection Error",
-        description: "Failed to connect to authentication service.",
-        variant: "destructive",
-      })
+      console.error("Auth check failed:", error)
       setLoading(false)
     }
   }
@@ -127,20 +117,9 @@ export default function APIStudio() {
         setWorkspaces(data)
         if (data.length > 0 && !currentWorkspace) {
           setCurrentWorkspace(data[0])
-          toast({
-            title: "Workspace Loaded",
-            description: `Switched to workspace: ${data[0].name}`,
-          })
         }
-      } else {
-        throw new Error(`Failed to fetch workspaces: ${response.status}`)
       }
     } catch (error) {
-      toast({
-        title: "Failed to Load Workspaces",
-        description: "Unable to load your workspaces. Please try refreshing the page.",
-        variant: "destructive",
-      })
       console.error("Failed to fetch workspaces:", error)
     }
   }
@@ -153,15 +132,8 @@ export default function APIStudio() {
       if (response.ok) {
         const data = await response.json()
         setCollections(data.map((col: any) => ({ ...col, requests: col.requests || [] })))
-      } else {
-        throw new Error(`Failed to fetch collections: ${response.status}`)
       }
     } catch (error) {
-      toast({
-        title: "Failed to Load Collections",
-        description: "Unable to load your collections. Some features may not work properly.",
-        variant: "destructive",
-      })
       console.error("Failed to fetch collections:", error)
     }
   }
@@ -174,15 +146,8 @@ export default function APIStudio() {
       if (response.ok) {
         const data = await response.json()
         setEnvironments(data)
-      } else {
-        throw new Error(`Failed to fetch environments: ${response.status}`)
       }
     } catch (error) {
-      toast({
-        title: "Failed to Load Environments",
-        description: "Unable to load your environments. Environment variables may not work.",
-        variant: "destructive",
-      })
       console.error("Failed to fetch environments:", error)
     }
   }
@@ -210,7 +175,6 @@ export default function APIStudio() {
       })
 
       if (isLocal) {
-        // In local development, reload to reset state
         window.location.reload()
       }
     } catch (error) {
@@ -335,7 +299,6 @@ export default function APIStudio() {
             }),
           })
         } catch (historyError) {
-          // Don't show error for history save failure
           console.warn("Failed to save request to history:", historyError)
         }
       }
@@ -466,7 +429,24 @@ export default function APIStudio() {
       .map((n) => n[0])
       .join("")
       .toUpperCase()
-      .slice(0, 2) // Limit to 2 characters
+      .slice(0, 2)
+  }
+
+  // Helper function to get default avatar
+  const getDefaultAvatar = (user: AuthUser) => {
+    const initials = getUserInitials(user)
+    const colors = [
+      "bg-red-500",
+      "bg-blue-500",
+      "bg-green-500",
+      "bg-yellow-500",
+      "bg-purple-500",
+      "bg-pink-500",
+      "bg-indigo-500",
+      "bg-teal-500",
+    ]
+    const colorIndex = user.email.charCodeAt(0) % colors.length
+    return { initials, color: colors[colorIndex] }
   }
 
   if (loading) {
@@ -510,6 +490,8 @@ export default function APIStudio() {
   }
 
   if (!activeTab) return null
+
+  const defaultAvatar = getDefaultAvatar(user)
 
   return (
     <div className="flex h-screen bg-background">
@@ -600,7 +582,9 @@ export default function APIStudio() {
                 <Button variant="ghost" className="relative h-8 w-8 rounded-full">
                   <Avatar className="h-8 w-8">
                     <AvatarImage src={user.avatar_url || "/placeholder.svg"} alt={user.name || "User"} />
-                    <AvatarFallback>{getUserInitials(user)}</AvatarFallback>
+                    <AvatarFallback className={`${defaultAvatar.color} text-white`}>
+                      {defaultAvatar.initials}
+                    </AvatarFallback>
                   </Avatar>
                 </Button>
               </DropdownMenuTrigger>
@@ -609,6 +593,24 @@ export default function APIStudio() {
                   <div className="font-medium">{user.name || "User"}</div>
                   <div className="text-xs text-muted-foreground">{user.email}</div>
                   {isLocal && <div className="text-xs text-green-600 font-medium">Local Development</div>}
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem>
+                  <User className="mr-2 h-4 w-4" />
+                  <span>Profile</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
+                  {theme === "dark" ? (
+                    <>
+                      <Sun className="mr-2 h-4 w-4" />
+                      <span>Light Mode</span>
+                    </>
+                  ) : (
+                    <>
+                      <Moon className="mr-2 h-4 w-4" />
+                      <span>Dark Mode</span>
+                    </>
+                  )}
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={handleSignOut}>

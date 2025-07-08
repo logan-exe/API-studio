@@ -8,7 +8,8 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import { ArrowLeft, Mail, Loader2, AlertCircle, CheckCircle } from "lucide-react"
+import { ArrowLeft, Mail, Loader2, CheckCircle, AlertCircle } from "lucide-react"
+import { resetPassword } from "@/lib/auth"
 import { toast } from "@/hooks/use-toast"
 
 interface ResetPasswordFormProps {
@@ -19,8 +20,8 @@ interface ResetPasswordFormProps {
 export function ResetPasswordForm({ onBack, onSuccess }: ResetPasswordFormProps) {
   const [email, setEmail] = useState("")
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   const validateEmail = (email: string) => {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
@@ -33,39 +34,24 @@ export function ResetPasswordForm({ onBack, onSuccess }: ResetPasswordFormProps)
     setLoading(true)
 
     try {
+      if (!email.trim()) {
+        throw new Error("Email is required")
+      }
+
       if (!validateEmail(email)) {
         throw new Error("Please enter a valid email address")
       }
 
-      // In local development, simulate password reset
-      if (process.env.NODE_ENV === "development") {
-        await new Promise((resolve) => setTimeout(resolve, 1500))
+      const { error } = await resetPassword(email)
 
-        setSuccess(true)
-
-        toast({
-          title: "Password Reset Email Sent",
-          description: "Check your email for instructions to reset your password.",
-        })
-
-        setTimeout(() => {
-          onSuccess()
-        }, 2000)
-        return
+      if (error) {
+        throw error
       }
 
-      // In production, this would call Supabase auth
-      // const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      //   redirectTo: `${window.location.origin}/auth/reset-password`,
-      // })
-
-      // if (error) throw error
-
       setSuccess(true)
-
       toast({
-        title: "Password Reset Email Sent",
-        description: "Check your email for instructions to reset your password.",
+        title: "Reset Email Sent",
+        description: "Check your email for password reset instructions.",
       })
 
       setTimeout(() => {
@@ -90,27 +76,30 @@ export function ResetPasswordForm({ onBack, onSuccess }: ResetPasswordFormProps)
       <Card className="w-full max-w-md">
         <CardHeader className="text-center">
           <CardTitle className="text-2xl font-bold">Reset Password</CardTitle>
-          <CardDescription>Enter your email address and we'll send you a link to reset your password.</CardDescription>
+          <CardDescription>Enter your email address and we'll send you a link to reset your password</CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
-          {error && (
-            <Alert variant="destructive">
-              <AlertCircle className="h-4 w-4" />
-              <AlertDescription>{error}</AlertDescription>
-            </Alert>
-          )}
-
-          {success && (
-            <Alert className="border-green-200 bg-green-50 text-green-800">
-              <CheckCircle className="h-4 w-4 text-green-600" />
-              <AlertDescription>
-                Password reset email sent! Check your inbox and follow the instructions.
-              </AlertDescription>
-            </Alert>
-          )}
-
-          {!success && (
+        <CardContent>
+          {success ? (
+            <div className="text-center space-y-4">
+              <CheckCircle className="mx-auto h-12 w-12 text-green-500" />
+              <div>
+                <h3 className="text-lg font-medium">Check your email</h3>
+                <p className="text-sm text-muted-foreground mt-2">We've sent password reset instructions to {email}</p>
+              </div>
+              <Button onClick={onBack} variant="outline" className="w-full bg-transparent">
+                <ArrowLeft className="mr-2 h-4 w-4" />
+                Back to Sign In
+              </Button>
+            </div>
+          ) : (
             <form onSubmit={handleSubmit} className="space-y-4">
+              {error && (
+                <Alert variant="destructive">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription>{error}</AlertDescription>
+                </Alert>
+              )}
+
               <div className="space-y-2">
                 <Label htmlFor="reset-email">Email Address</Label>
                 <div className="relative">
@@ -118,32 +107,40 @@ export function ResetPasswordForm({ onBack, onSuccess }: ResetPasswordFormProps)
                   <Input
                     id="reset-email"
                     type="email"
-                    placeholder="Enter your email address"
+                    placeholder="Enter your email"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     className="pl-10"
                     required
+                    disabled={loading}
                   />
                 </div>
               </div>
 
-              <Button type="submit" className="w-full" disabled={loading}>
-                {loading ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Sending reset email...
-                  </>
-                ) : (
-                  "Send Reset Email"
-                )}
-              </Button>
+              <div className="flex space-x-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={onBack}
+                  className="flex-1 bg-transparent"
+                  disabled={loading}
+                >
+                  <ArrowLeft className="mr-2 h-4 w-4" />
+                  Back
+                </Button>
+                <Button type="submit" className="flex-1" disabled={loading}>
+                  {loading ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Sending...
+                    </>
+                  ) : (
+                    "Send Reset Link"
+                  )}
+                </Button>
+              </div>
             </form>
           )}
-
-          <Button type="button" variant="ghost" className="w-full" onClick={onBack} disabled={loading}>
-            <ArrowLeft className="mr-2 h-4 w-4" />
-            Back to Sign In
-          </Button>
         </CardContent>
       </Card>
     </div>

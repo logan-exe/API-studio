@@ -1,10 +1,12 @@
 "use client"
 
+import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Copy, Globe, Minimize2, Wand2 } from "lucide-react"
+import { Input } from "@/components/ui/input"
+import { Copy, Globe, Minimize2, Wand2, Search, X } from "lucide-react"
 import type { ResponseData } from "@/types/api-studio"
 import { toast } from "@/hooks/use-toast"
 
@@ -14,6 +16,9 @@ interface ResponsePanelProps {
 }
 
 export function ResponsePanel({ response, onResponseUpdate }: ResponsePanelProps) {
+  const [searchTerm, setSearchTerm] = useState("")
+  const [showSearch, setShowSearch] = useState(false)
+
   const formatJSON = (jsonString: string, prettify = true) => {
     try {
       const parsed = JSON.parse(jsonString)
@@ -38,6 +43,13 @@ export function ResponsePanel({ response, onResponseUpdate }: ResponsePanelProps
     return body
   }
 
+  const highlightSearchTerm = (text: string, searchTerm: string) => {
+    if (!searchTerm.trim()) return text
+
+    const regex = new RegExp(`(${searchTerm.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "gi")
+    return text.replace(regex, '<mark class="bg-yellow-200 dark:bg-yellow-800">$1</mark>')
+  }
+
   const getStatusColor = (status: number) => {
     if (status >= 200 && status < 300) return "bg-green-500"
     if (status >= 300 && status < 400) return "bg-yellow-500"
@@ -58,6 +70,8 @@ export function ResponsePanel({ response, onResponseUpdate }: ResponsePanelProps
   }
 
   const isJSON = response.headers["content-type"]?.includes("json")
+  const formattedBody = formatResponseBody(response.body, response.headers["content-type"] || "")
+  const displayBody = showSearch && searchTerm ? highlightSearchTerm(formattedBody, searchTerm) : formattedBody
 
   return (
     <div className="h-full flex flex-col">
@@ -73,6 +87,19 @@ export function ResponsePanel({ response, onResponseUpdate }: ResponsePanelProps
             </span>
           </div>
           <div className="flex space-x-2">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                setShowSearch(!showSearch)
+                if (!showSearch) {
+                  setSearchTerm("")
+                }
+              }}
+            >
+              <Search className="h-4 w-4" />
+              Search
+            </Button>
             {isJSON && (
               <>
                 <Button
@@ -129,6 +156,41 @@ export function ResponsePanel({ response, onResponseUpdate }: ResponsePanelProps
             </Button>
           </div>
         </div>
+
+        {/* Search Bar */}
+        {showSearch && (
+          <div className="mt-3 flex items-center space-x-2">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search in response..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="pl-10 pr-10"
+              />
+              {searchTerm && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="absolute right-1 top-1/2 transform -translate-y-1/2 h-6 w-6 p-0"
+                  onClick={() => setSearchTerm("")}
+                >
+                  <X className="h-3 w-3" />
+                </Button>
+              )}
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                setShowSearch(false)
+                setSearchTerm("")
+              }}
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
+        )}
       </div>
 
       {/* Response Content */}
@@ -144,9 +206,12 @@ export function ResponsePanel({ response, onResponseUpdate }: ResponsePanelProps
           <TabsContent value="body" className="flex-1 min-h-0 px-4 pb-4">
             <div className="h-full border rounded">
               <ScrollArea className="h-full">
-                <pre className="text-sm font-mono whitespace-pre-wrap p-4">
-                  {formatResponseBody(response.body, response.headers["content-type"] || "")}
-                </pre>
+                <pre
+                  className="text-sm font-mono whitespace-pre-wrap p-4"
+                  dangerouslySetInnerHTML={{
+                    __html: showSearch && searchTerm ? displayBody : formattedBody,
+                  }}
+                />
               </ScrollArea>
             </div>
           </TabsContent>

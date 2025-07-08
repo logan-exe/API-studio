@@ -11,6 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Eye, EyeOff, Loader2, Mail, Lock, User, AlertCircle, CheckCircle } from "lucide-react"
 import { toast } from "@/hooks/use-toast"
+import { signIn, signUp, signInWithGoogle, isLocalEnvironment } from "@/lib/auth"
 import { ResetPasswordForm } from "./reset-password-form"
 
 interface AuthFormProps {
@@ -23,6 +24,8 @@ export function AuthForm({ onSuccess }: AuthFormProps) {
   const [showPassword, setShowPassword] = useState(false)
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  const isLocal = isLocalEnvironment()
 
   // Form data
   const [signInData, setSignInData] = useState({
@@ -60,33 +63,24 @@ export function AuthForm({ onSuccess }: AuthFormProps) {
         throw new Error("Password is required")
       }
 
-      // In local development, simulate successful sign in
-      if (process.env.NODE_ENV === "development") {
-        await new Promise((resolve) => setTimeout(resolve, 1000))
+      const { user, error } = await signIn(signInData.email, signInData.password)
 
-        toast({
-          title: "Welcome back!",
-          description: "You have been successfully signed in.",
-        })
-
-        onSuccess?.()
-        return
+      if (error) {
+        throw error
       }
-
-      // In production, this would call Supabase auth
-      // const { data, error } = await supabase.auth.signInWithPassword({
-      //   email: signInData.email,
-      //   password: signInData.password,
-      // })
-
-      // if (error) throw error
 
       toast({
         title: "Welcome back!",
         description: "You have been successfully signed in.",
       })
 
-      onSuccess?.()
+      // Call onSuccess to trigger app refresh
+      if (onSuccess) {
+        onSuccess()
+      } else {
+        // Fallback to page reload
+        window.location.reload()
+      }
     } catch (error: any) {
       const errorMessage = error.message || "An unexpected error occurred"
       setError(errorMessage)
@@ -123,38 +117,33 @@ export function AuthForm({ onSuccess }: AuthFormProps) {
         throw new Error("Passwords do not match")
       }
 
-      // In local development, simulate successful sign up
-      if (process.env.NODE_ENV === "development") {
-        await new Promise((resolve) => setTimeout(resolve, 1000))
+      const { user, error } = await signUp(signUpData.email, signUpData.password, signUpData.name)
 
+      if (error) {
+        throw error
+      }
+
+      if (isLocal) {
         toast({
           title: "Account Created!",
           description: "Welcome to API Studio. You can start using the application right away.",
         })
 
-        onSuccess?.()
-        return
+        // Call onSuccess to trigger app refresh
+        if (onSuccess) {
+          onSuccess()
+        } else {
+          // Fallback to page reload
+          window.location.reload()
+        }
+      } else {
+        toast({
+          title: "Account Created!",
+          description: "Please check your email to verify your account before signing in.",
+        })
+
+        setActiveTab("signin")
       }
-
-      // In production, this would call Supabase auth
-      // const { data, error } = await supabase.auth.signUp({
-      //   email: signUpData.email,
-      //   password: signUpData.password,
-      //   options: {
-      //     data: {
-      //       name: signUpData.name,
-      //     },
-      //   },
-      // })
-
-      // if (error) throw error
-
-      toast({
-        title: "Account Created!",
-        description: "Please check your email to verify your account.",
-      })
-
-      setActiveTab("signin")
     } catch (error: any) {
       const errorMessage = error.message || "An unexpected error occurred"
       setError(errorMessage)
@@ -174,33 +163,31 @@ export function AuthForm({ onSuccess }: AuthFormProps) {
     setError(null)
 
     try {
-      // In local development, simulate Google sign in
-      if (process.env.NODE_ENV === "development") {
-        await new Promise((resolve) => setTimeout(resolve, 1000))
+      const { user, error } = await signInWithGoogle()
 
+      if (error) {
+        throw error
+      }
+
+      if (isLocal) {
         toast({
           title: "Welcome!",
           description: "You have been successfully signed in with Google.",
         })
 
-        onSuccess?.()
-        return
+        // Call onSuccess to trigger app refresh
+        if (onSuccess) {
+          onSuccess()
+        } else {
+          // Fallback to page reload
+          window.location.reload()
+        }
+      } else {
+        toast({
+          title: "Redirecting...",
+          description: "You will be redirected to Google to complete sign in.",
+        })
       }
-
-      // In production, this would call Supabase OAuth
-      // const { data, error } = await supabase.auth.signInWithOAuth({
-      //   provider: 'google',
-      //   options: {
-      //     redirectTo: `${window.location.origin}/auth/callback`,
-      //   },
-      // })
-
-      // if (error) throw error
-
-      toast({
-        title: "Redirecting...",
-        description: "You will be redirected to Google to complete sign in.",
-      })
     } catch (error: any) {
       const errorMessage = error.message || "Failed to sign in with Google"
       setError(errorMessage)
@@ -211,7 +198,9 @@ export function AuthForm({ onSuccess }: AuthFormProps) {
         variant: "destructive",
       })
     } finally {
-      setLoading(false)
+      if (isLocal) {
+        setLoading(false)
+      }
     }
   }
 
@@ -238,6 +227,11 @@ export function AuthForm({ onSuccess }: AuthFormProps) {
           <CardDescription>
             {activeTab === "signin" ? "Sign in to your account" : "Create a new account"}
           </CardDescription>
+          {isLocal && (
+            <div className="text-xs text-muted-foreground bg-muted p-2 rounded">
+              Local Development Mode - Any credentials will work
+            </div>
+          )}
         </CardHeader>
         <CardContent>
           <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as "signin" | "signup")}>
@@ -267,6 +261,7 @@ export function AuthForm({ onSuccess }: AuthFormProps) {
                       onChange={(e) => setSignInData({ ...signInData, email: e.target.value })}
                       className="pl-10"
                       required
+                      disabled={loading}
                     />
                   </div>
                 </div>
@@ -283,6 +278,7 @@ export function AuthForm({ onSuccess }: AuthFormProps) {
                       onChange={(e) => setSignInData({ ...signInData, password: e.target.value })}
                       className="pl-10 pr-10"
                       required
+                      disabled={loading}
                     />
                     <Button
                       type="button"
@@ -290,6 +286,7 @@ export function AuthForm({ onSuccess }: AuthFormProps) {
                       size="sm"
                       className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
                       onClick={() => setShowPassword(!showPassword)}
+                      disabled={loading}
                     >
                       {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                     </Button>
@@ -301,6 +298,7 @@ export function AuthForm({ onSuccess }: AuthFormProps) {
                   variant="link"
                   className="p-0 h-auto text-sm"
                   onClick={() => setActiveTab("reset")}
+                  disabled={loading}
                 >
                   Forgot your password?
                 </Button>
@@ -373,6 +371,7 @@ export function AuthForm({ onSuccess }: AuthFormProps) {
                       onChange={(e) => setSignUpData({ ...signUpData, name: e.target.value })}
                       className="pl-10"
                       required
+                      disabled={loading}
                     />
                   </div>
                 </div>
@@ -389,6 +388,7 @@ export function AuthForm({ onSuccess }: AuthFormProps) {
                       onChange={(e) => setSignUpData({ ...signUpData, email: e.target.value })}
                       className="pl-10"
                       required
+                      disabled={loading}
                     />
                   </div>
                 </div>
@@ -405,6 +405,7 @@ export function AuthForm({ onSuccess }: AuthFormProps) {
                       onChange={(e) => setSignUpData({ ...signUpData, password: e.target.value })}
                       className="pl-10 pr-10"
                       required
+                      disabled={loading}
                     />
                     <Button
                       type="button"
@@ -412,6 +413,7 @@ export function AuthForm({ onSuccess }: AuthFormProps) {
                       size="sm"
                       className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
                       onClick={() => setShowPassword(!showPassword)}
+                      disabled={loading}
                     >
                       {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                     </Button>
@@ -433,6 +435,7 @@ export function AuthForm({ onSuccess }: AuthFormProps) {
                       onChange={(e) => setSignUpData({ ...signUpData, confirmPassword: e.target.value })}
                       className="pl-10 pr-10"
                       required
+                      disabled={loading}
                     />
                     <Button
                       type="button"
@@ -440,6 +443,7 @@ export function AuthForm({ onSuccess }: AuthFormProps) {
                       size="sm"
                       className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
                       onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                      disabled={loading}
                     >
                       {showConfirmPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                     </Button>
