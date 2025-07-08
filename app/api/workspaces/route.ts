@@ -23,7 +23,7 @@ export async function GET(request: NextRequest) {
       // User doesn't exist, create user profile
       const { error: createUserError } = await supabase.from("users").insert({
         id: userId,
-        email: `user-${userId}@example.com`, // You might want to get actual email
+        email: `user-${userId}@example.com`,
         name: `User ${userId}`,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
@@ -74,7 +74,7 @@ export async function POST(request: NextRequest) {
       // User doesn't exist, create user profile
       const { error: createUserError } = await supabase.from("users").insert({
         id: owner_id,
-        email: `user-${owner_id}@example.com`, // You might want to get actual email
+        email: `user-${owner_id}@example.com`,
         name: `User ${owner_id}`,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),

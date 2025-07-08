@@ -20,12 +20,13 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { LogOut, Moon, Sun, User } from "lucide-react"
+import { LogOut, Moon, Sun, User, Github } from "lucide-react"
 import type { RequestData, ResponseData } from "@/types/api-studio"
 import type { User as AuthUser, Workspace } from "@/types/auth"
 import { getCurrentUser, signOut, isLocalEnvironment } from "@/lib/auth"
 import { toast } from "@/hooks/use-toast"
 import { HeroSection } from "@/components/landing/hero-section"
+import { WorkspaceSetup } from "@/components/workspace/workspace-setup"
 import { useTheme } from "next-themes"
 
 export default function APIStudio() {
@@ -34,6 +35,8 @@ export default function APIStudio() {
   const [currentWorkspace, setCurrentWorkspace] = useState<Workspace | null>(null)
   const [loading, setLoading] = useState(true)
   const [showLanding, setShowLanding] = useState(true)
+  const [showAuth, setShowAuth] = useState(false)
+  const [showWorkspaceSetup, setShowWorkspaceSetup] = useState(false)
 
   const { theme, setTheme } = useTheme()
   const isLocal = isLocalEnvironment()
@@ -63,30 +66,30 @@ export default function APIStudio() {
 
   useEffect(() => {
     if (user) {
-      if (isLocal) {
-        // In local development, create a default workspace
-        const defaultWorkspace: Workspace = {
-          id: "local-workspace-123",
-          name: "Local Development",
-          description: "Default workspace for local development",
-          role: "owner",
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        }
-        setWorkspaces([defaultWorkspace])
-        setCurrentWorkspace(defaultWorkspace)
-      } else {
-        fetchWorkspaces()
+      fetchWorkspaces()
+    } else {
+      // For anonymous users, create a local workspace
+      const anonymousWorkspace: Workspace = {
+        id: "anonymous-workspace",
+        name: "My Workspace",
+        description: "Anonymous workspace",
+        owner_id: "anonymous",
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        role: "owner",
       }
+      setWorkspaces([anonymousWorkspace])
+      setCurrentWorkspace(anonymousWorkspace)
+      setShowLanding(false)
     }
   }, [user])
 
   useEffect(() => {
-    if (currentWorkspace && !isLocal) {
+    if (currentWorkspace && !isLocal && user) {
       fetchCollections()
       fetchEnvironments()
     }
-  }, [currentWorkspace])
+  }, [currentWorkspace, user])
 
   const checkAuth = async () => {
     try {
@@ -110,22 +113,31 @@ export default function APIStudio() {
   }
 
   const fetchWorkspaces = async () => {
+    if (!user) return
+
     try {
-      const response = await fetch("/api/workspaces")
+      const response = await fetch(`/api/workspaces?userId=${user.id}`)
       if (response.ok) {
         const data = await response.json()
-        setWorkspaces(data)
-        if (data.length > 0 && !currentWorkspace) {
-          setCurrentWorkspace(data[0])
+        setWorkspaces(data.workspaces || [])
+
+        if (data.workspaces && data.workspaces.length > 0) {
+          setCurrentWorkspace(data.workspaces[0])
+          setShowLanding(false)
+        } else {
+          setShowWorkspaceSetup(true)
+          setShowLanding(false)
         }
       }
     } catch (error) {
       console.error("Failed to fetch workspaces:", error)
+      setShowWorkspaceSetup(true)
+      setShowLanding(false)
     }
   }
 
   const fetchCollections = async () => {
-    if (!currentWorkspace) return
+    if (!currentWorkspace || !user) return
 
     try {
       const response = await fetch(`/api/workspaces/${currentWorkspace.id}/collections`)
@@ -139,7 +151,7 @@ export default function APIStudio() {
   }
 
   const fetchEnvironments = async () => {
-    if (!currentWorkspace) return
+    if (!currentWorkspace || !user) return
 
     try {
       const response = await fetch(`/api/workspaces/${currentWorkspace.id}/environments`)
@@ -168,6 +180,9 @@ export default function APIStudio() {
       setUser(null)
       setWorkspaces([])
       setCurrentWorkspace(null)
+      setShowLanding(true)
+      setShowAuth(false)
+      setShowWorkspaceSetup(false)
 
       toast({
         title: "Signed Out Successfully",
@@ -184,6 +199,30 @@ export default function APIStudio() {
         variant: "destructive",
       })
     }
+  }
+
+  const handleGetStarted = () => {
+    if (user) {
+      if (workspaces.length > 0) {
+        setShowLanding(false)
+      } else {
+        setShowWorkspaceSetup(true)
+        setShowLanding(false)
+      }
+    } else {
+      // Allow anonymous usage
+      setShowLanding(false)
+    }
+  }
+
+  const handleWorkspaceCreated = (workspace: Workspace) => {
+    setWorkspaces([...workspaces, workspace])
+    setCurrentWorkspace(workspace)
+    setShowWorkspaceSetup(false)
+    toast({
+      title: "Workspace Created",
+      description: `Successfully created workspace: ${workspace.name}`,
+    })
   }
 
   const updateActiveTab = (updates: Partial<typeof activeTab>) => {
@@ -281,8 +320,8 @@ export default function APIStudio() {
 
       updateActiveTab({ response: responseData })
 
-      // Save to history (skip in local development)
-      if (currentWorkspace && !isLocal) {
+      // Save to history (skip for anonymous users)
+      if (currentWorkspace && user && currentWorkspace.id !== "anonymous-workspace") {
         try {
           await fetch(`/api/workspaces/${currentWorkspace.id}/history`, {
             method: "POST",
@@ -333,8 +372,8 @@ export default function APIStudio() {
       return
     }
 
-    // In local development, simulate saving
-    if (isLocal) {
+    // For anonymous users or local development, simulate saving
+    if (!user || currentWorkspace.id === "anonymous-workspace" || isLocal) {
       const savedRequest = {
         id: Date.now().toString(),
         name,
@@ -457,12 +496,37 @@ export default function APIStudio() {
     )
   }
 
-  if (!user && showLanding) {
-    return <HeroSection onGetStarted={() => setShowLanding(false)} />
+  if (showLanding) {
+    return <HeroSection onGetStarted={handleGetStarted} />
   }
 
-  if (!user) {
+  if (showAuth) {
     return <AuthForm onSuccess={checkAuth} />
+  }
+
+  if (showWorkspaceSetup) {
+    return (
+      <WorkspaceSetup
+        user={user}
+        onWorkspaceCreated={handleWorkspaceCreated}
+        onSkip={() => {
+          // Create anonymous workspace
+          const anonymousWorkspace: Workspace = {
+            id: "anonymous-workspace",
+            name: "My Workspace",
+            description: "Anonymous workspace",
+            owner_id: "anonymous",
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            role: "owner",
+          }
+          setWorkspaces([anonymousWorkspace])
+          setCurrentWorkspace(anonymousWorkspace)
+          setShowWorkspaceSetup(false)
+        }}
+        onSignIn={() => setShowAuth(true)}
+      />
+    )
   }
 
   if (!currentWorkspace) {
@@ -491,7 +555,7 @@ export default function APIStudio() {
 
   if (!activeTab) return null
 
-  const defaultAvatar = getDefaultAvatar(user)
+  const defaultAvatar = user ? getDefaultAvatar(user) : { initials: "A", color: "bg-blue-500" }
 
   return (
     <div className="flex h-screen bg-background">
@@ -553,7 +617,7 @@ export default function APIStudio() {
         <div className="border-b p-4 bg-muted/30">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-4">
-              {!isLocal && (
+              {user && !isLocal && (
                 <>
                   <WorkspaceSelector
                     workspaces={workspaces}
@@ -577,48 +641,96 @@ export default function APIStudio() {
               )}
             </div>
 
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" className="relative h-8 w-8 rounded-full">
-                  <Avatar className="h-8 w-8">
-                    <AvatarImage src={user.avatar_url || "/placeholder.svg"} alt={user.name || "User"} />
-                    <AvatarFallback className={`${defaultAvatar.color} text-white`}>
-                      {defaultAvatar.initials}
-                    </AvatarFallback>
-                  </Avatar>
+            <div className="flex items-center space-x-2">
+              {!user && (
+                <Button variant="outline" onClick={() => setShowAuth(true)}>
+                  Sign In
                 </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent className="w-56" align="end" forceMount>
-                <DropdownMenuItem className="flex-col items-start">
-                  <div className="font-medium">{user.name || "User"}</div>
-                  <div className="text-xs text-muted-foreground">{user.email}</div>
-                  {isLocal && <div className="text-xs text-green-600 font-medium">Local Development</div>}
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem>
-                  <User className="mr-2 h-4 w-4" />
-                  <span>Profile</span>
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
-                  {theme === "dark" ? (
-                    <>
-                      <Sun className="mr-2 h-4 w-4" />
-                      <span>Light Mode</span>
-                    </>
-                  ) : (
-                    <>
-                      <Moon className="mr-2 h-4 w-4" />
-                      <span>Dark Mode</span>
-                    </>
-                  )}
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={handleSignOut}>
-                  <LogOut className="mr-2 h-4 w-4" />
-                  <span>Sign out</span>
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+              )}
+
+              {user ? (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="ghost" className="relative h-8 w-8 rounded-full">
+                      <Avatar className="h-8 w-8">
+                        <AvatarImage src={user.avatar_url || "/placeholder.svg"} alt={user.name || "User"} />
+                        <AvatarFallback className={`${defaultAvatar.color} text-white`}>
+                          {defaultAvatar.initials}
+                        </AvatarFallback>
+                      </Avatar>
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent className="w-56" align="end" forceMount>
+                    <DropdownMenuItem className="flex-col items-start">
+                      <div className="font-medium">{user.name || "User"}</div>
+                      <div className="text-xs text-muted-foreground">{user.email}</div>
+                      {isLocal && <div className="text-xs text-green-600 font-medium">Local Development</div>}
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem>
+                      <User className="mr-2 h-4 w-4" />
+                      <span>Profile</span>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem>
+                      <Github className="mr-2 h-4 w-4" />
+                      <span>Connect GitHub</span>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
+                      {theme === "dark" ? (
+                        <>
+                          <Sun className="mr-2 h-4 w-4" />
+                          <span>Light Mode</span>
+                        </>
+                      ) : (
+                        <>
+                          <Moon className="mr-2 h-4 w-4" />
+                          <span>Dark Mode</span>
+                        </>
+                      )}
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={handleSignOut}>
+                      <LogOut className="mr-2 h-4 w-4" />
+                      <span>Sign out</span>
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              ) : (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="ghost" className="relative h-8 w-8 rounded-full">
+                      <Avatar className="h-8 w-8">
+                        <AvatarFallback className="bg-blue-500 text-white">A</AvatarFallback>
+                      </Avatar>
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent className="w-56" align="end" forceMount>
+                    <DropdownMenuItem className="flex-col items-start">
+                      <div className="font-medium">Anonymous User</div>
+                      <div className="text-xs text-muted-foreground">Using local workspace</div>
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={() => setShowAuth(true)}>
+                      <User className="mr-2 h-4 w-4" />
+                      <span>Sign In</span>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
+                      {theme === "dark" ? (
+                        <>
+                          <Sun className="mr-2 h-4 w-4" />
+                          <span>Light Mode</span>
+                        </>
+                      ) : (
+                        <>
+                          <Moon className="mr-2 h-4 w-4" />
+                          <span>Dark Mode</span>
+                        </>
+                      )}
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
+            </div>
           </div>
         </div>
 
