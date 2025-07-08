@@ -33,16 +33,23 @@ export async function signUp(email: string, password: string, name: string) {
     }
   }
 
-  const { data, error } = await supabase.auth.signUp({
-    email,
-    password,
-    options: {
-      data: {
-        name,
+  try {
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        data: {
+          name,
+        },
       },
-    },
-  })
-  return { data, error }
+    })
+    return { data, error }
+  } catch (error) {
+    return {
+      data: null,
+      error: { message: "Network error. Please check your connection and try again." },
+    }
+  }
 }
 
 export async function signIn(email: string, password: string) {
@@ -55,11 +62,18 @@ export async function signIn(email: string, password: string) {
     }
   }
 
-  const { data, error } = await supabase.auth.signInWithPassword({
-    email,
-    password,
-  })
-  return { data, error }
+  try {
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    })
+    return { data, error }
+  } catch (error) {
+    return {
+      data: null,
+      error: { message: "Network error. Please check your connection and try again." },
+    }
+  }
 }
 
 export async function signInWithGoogle() {
@@ -72,16 +86,64 @@ export async function signInWithGoogle() {
     }
   }
 
-  const redirectTo =
-    typeof window !== "undefined" ? `${window.location.origin}/auth/callback` : `${PRODUCTION_BASE_URL}/auth/callback`
+  try {
+    const redirectTo =
+      typeof window !== "undefined" ? `${window.location.origin}/auth/callback` : `${PRODUCTION_BASE_URL}/auth/callback`
 
-  const { data, error } = await supabase.auth.signInWithOAuth({
-    provider: "google",
-    options: {
+    const { data, error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: {
+        redirectTo,
+      },
+    })
+    return { data, error }
+  } catch (error) {
+    return {
+      data: null,
+      error: { message: "Failed to connect to Google. Please try again." },
+    }
+  }
+}
+
+export async function resetPassword(email: string) {
+  if (isLocal) {
+    // In local development, simulate successful password reset
+    return { error: null }
+  }
+
+  try {
+    const redirectTo =
+      typeof window !== "undefined"
+        ? `${window.location.origin}/auth/reset-password`
+        : `${PRODUCTION_BASE_URL}/auth/reset-password`
+
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
       redirectTo,
-    },
-  })
-  return { data, error }
+    })
+    return { error }
+  } catch (error) {
+    return {
+      error: { message: "Network error. Please check your connection and try again." },
+    }
+  }
+}
+
+export async function updatePassword(newPassword: string) {
+  if (isLocal) {
+    // In local development, simulate successful password update
+    return { error: null }
+  }
+
+  try {
+    const { error } = await supabase.auth.updateUser({
+      password: newPassword,
+    })
+    return { error }
+  } catch (error) {
+    return {
+      error: { message: "Failed to update password. Please try again." },
+    }
+  }
 }
 
 export async function signOut() {
@@ -91,8 +153,14 @@ export async function signOut() {
     return { error: null }
   }
 
-  const { error } = await supabase.auth.signOut()
-  return { error }
+  try {
+    const { error } = await supabase.auth.signOut()
+    return { error }
+  } catch (error) {
+    return {
+      error: { message: "Failed to sign out. Please try again." },
+    }
+  }
 }
 
 export async function getCurrentUser() {
@@ -107,11 +175,18 @@ export async function getCurrentUser() {
     return { user: DUMMY_USER, error: null }
   }
 
-  const {
-    data: { user },
-    error,
-  } = await supabase.auth.getUser()
-  return { user, error }
+  try {
+    const {
+      data: { user },
+      error,
+    } = await supabase.auth.getUser()
+    return { user, error }
+  } catch (error) {
+    return {
+      user: null,
+      error: { message: "Failed to get user information." },
+    }
+  }
 }
 
 export function isLocalEnvironment() {

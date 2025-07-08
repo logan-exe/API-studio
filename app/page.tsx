@@ -87,13 +87,35 @@ export default function APIStudio() {
   }, [currentWorkspace])
 
   const checkAuth = async () => {
-    const { user: currentUser } = await getCurrentUser()
-    setUser(currentUser)
-    setLoading(false)
+    try {
+      const { user: currentUser, error } = await getCurrentUser()
 
-    // In local development, skip landing page
-    if (isLocal && currentUser) {
-      setShowLanding(false)
+      if (error) {
+        toast({
+          title: "Authentication Error",
+          description: error.message || "Failed to check authentication status.",
+          variant: "destructive",
+        })
+      }
+
+      setUser(currentUser)
+      setLoading(false)
+
+      // In local development, skip landing page
+      if (isLocal && currentUser) {
+        setShowLanding(false)
+        toast({
+          title: "Local Development Mode",
+          description: "You're running in local development mode with a demo user.",
+        })
+      }
+    } catch (error) {
+      toast({
+        title: "Connection Error",
+        description: "Failed to connect to authentication service.",
+        variant: "destructive",
+      })
+      setLoading(false)
     }
   }
 
@@ -105,9 +127,20 @@ export default function APIStudio() {
         setWorkspaces(data)
         if (data.length > 0 && !currentWorkspace) {
           setCurrentWorkspace(data[0])
+          toast({
+            title: "Workspace Loaded",
+            description: `Switched to workspace: ${data[0].name}`,
+          })
         }
+      } else {
+        throw new Error(`Failed to fetch workspaces: ${response.status}`)
       }
     } catch (error) {
+      toast({
+        title: "Failed to Load Workspaces",
+        description: "Unable to load your workspaces. Please try refreshing the page.",
+        variant: "destructive",
+      })
       console.error("Failed to fetch workspaces:", error)
     }
   }
@@ -119,9 +152,16 @@ export default function APIStudio() {
       const response = await fetch(`/api/workspaces/${currentWorkspace.id}/collections`)
       if (response.ok) {
         const data = await response.json()
-        setCollections(data.map((col: any) => ({ ...col, requests: [] })))
+        setCollections(data.map((col: any) => ({ ...col, requests: col.requests || [] })))
+      } else {
+        throw new Error(`Failed to fetch collections: ${response.status}`)
       }
     } catch (error) {
+      toast({
+        title: "Failed to Load Collections",
+        description: "Unable to load your collections. Some features may not work properly.",
+        variant: "destructive",
+      })
       console.error("Failed to fetch collections:", error)
     }
   }
@@ -134,20 +174,51 @@ export default function APIStudio() {
       if (response.ok) {
         const data = await response.json()
         setEnvironments(data)
+      } else {
+        throw new Error(`Failed to fetch environments: ${response.status}`)
       }
     } catch (error) {
+      toast({
+        title: "Failed to Load Environments",
+        description: "Unable to load your environments. Environment variables may not work.",
+        variant: "destructive",
+      })
       console.error("Failed to fetch environments:", error)
     }
   }
 
   const handleSignOut = async () => {
-    await signOut()
-    setUser(null)
-    setWorkspaces([])
-    setCurrentWorkspace(null)
-    if (isLocal) {
-      // In local development, reload to reset state
-      window.location.reload()
+    try {
+      const { error } = await signOut()
+
+      if (error) {
+        toast({
+          title: "Sign Out Failed",
+          description: error.message || "Failed to sign out. Please try again.",
+          variant: "destructive",
+        })
+        return
+      }
+
+      setUser(null)
+      setWorkspaces([])
+      setCurrentWorkspace(null)
+
+      toast({
+        title: "Signed Out Successfully",
+        description: "You have been signed out of API Studio.",
+      })
+
+      if (isLocal) {
+        // In local development, reload to reset state
+        window.location.reload()
+      }
+    } catch (error) {
+      toast({
+        title: "Sign Out Error",
+        description: "An unexpected error occurred while signing out.",
+        variant: "destructive",
+      })
     }
   }
 
@@ -172,8 +243,8 @@ export default function APIStudio() {
   const sendRequest = async () => {
     if (!activeTab || !activeTab.request.url.trim()) {
       toast({
-        title: "Error",
-        description: "Please enter a URL",
+        title: "Invalid Request",
+        description: "Please enter a valid URL before sending the request.",
         variant: "destructive",
       })
       return
@@ -248,30 +319,39 @@ export default function APIStudio() {
 
       // Save to history (skip in local development)
       if (currentWorkspace && !isLocal) {
-        await fetch(`/api/workspaces/${currentWorkspace.id}/history`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            method: activeTab.request.method,
-            url: activeTab.request.url,
-            headers: activeTab.request.headers,
-            body: activeTab.request.body,
-            response_status: response.status,
-            response_headers: responseHeaders,
-            response_body: responseText,
-            response_time: endTime - startTime,
-          }),
-        })
+        try {
+          await fetch(`/api/workspaces/${currentWorkspace.id}/history`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              method: activeTab.request.method,
+              url: activeTab.request.url,
+              headers: activeTab.request.headers,
+              body: activeTab.request.body,
+              response_status: response.status,
+              response_headers: responseHeaders,
+              response_body: responseText,
+              response_time: endTime - startTime,
+            }),
+          })
+        } catch (historyError) {
+          // Don't show error for history save failure
+          console.warn("Failed to save request to history:", historyError)
+        }
       }
 
       toast({
-        title: "Request sent",
+        title: "Request Completed",
         description: `${response.status} ${response.statusText} • ${endTime - startTime}ms`,
       })
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "Unknown error occurred"
+
       toast({
-        title: "Request failed",
-        description: error instanceof Error ? error.message : "Unknown error occurred",
+        title: "Request Failed",
+        description: errorMessage.includes("fetch")
+          ? "Network error. Please check your connection and try again."
+          : errorMessage,
         variant: "destructive",
       })
       updateActiveTab({ response: null })
@@ -281,7 +361,14 @@ export default function APIStudio() {
   }
 
   const saveRequest = async (name: string, collectionId: string) => {
-    if (!activeTab || !currentWorkspace) return
+    if (!activeTab || !currentWorkspace) {
+      toast({
+        title: "Save Failed",
+        description: "Unable to save request. Please try again.",
+        variant: "destructive",
+      })
+      return
+    }
 
     // In local development, simulate saving
     if (isLocal) {
@@ -313,8 +400,8 @@ export default function APIStudio() {
       })
 
       toast({
-        title: "Request saved",
-        description: `Saved "${name}" to collection`,
+        title: "Request Saved",
+        description: `Successfully saved "${name}" to collection.`,
       })
       return
     }
@@ -339,7 +426,7 @@ export default function APIStudio() {
       })
 
       if (!response.ok) {
-        throw new Error("Failed to save request")
+        throw new Error(`Failed to save request: ${response.status}`)
       }
 
       const savedRequest = await response.json()
@@ -359,16 +446,27 @@ export default function APIStudio() {
       })
 
       toast({
-        title: "Request saved",
-        description: `Saved "${name}" to collection`,
+        title: "Request Saved",
+        description: `Successfully saved "${name}" to collection.`,
       })
     } catch (error) {
       toast({
-        title: "Error",
-        description: "Failed to save request",
+        title: "Save Failed",
+        description: "Failed to save request. Please try again.",
         variant: "destructive",
       })
     }
+  }
+
+  // Helper function to get user initials safely
+  const getUserInitials = (user: AuthUser) => {
+    if (!user.name) return "U"
+    return user.name
+      .split(" ")
+      .map((n) => n[0])
+      .join("")
+      .toUpperCase()
+      .slice(0, 2) // Limit to 2 characters
   }
 
   if (loading) {
@@ -400,6 +498,10 @@ export default function APIStudio() {
             onWorkspaceCreate={(workspace) => {
               setWorkspaces([...workspaces, workspace])
               setCurrentWorkspace(workspace)
+              toast({
+                title: "Workspace Created",
+                description: `Successfully created workspace: ${workspace.name}`,
+              })
             }}
           />
         </div>
@@ -412,28 +514,54 @@ export default function APIStudio() {
   return (
     <div className="flex h-screen bg-background">
       <Sidebar
-        collections={collections}
-        environments={environments}
+        collections={collections || []}
+        environments={environments || []}
         activeEnvironment={activeEnvironment}
-        onCollectionCreate={(collection) => setCollections((prev) => [...prev, collection])}
-        onCollectionDelete={(collectionId) => setCollections((prev) => prev.filter((c) => c.id !== collectionId))}
+        onCollectionCreate={(collection) => {
+          setCollections((prev) => [...(prev || []), collection])
+          toast({
+            title: "Collection Created",
+            description: `Successfully created collection: ${collection.name}`,
+          })
+        }}
+        onCollectionDelete={(collectionId) => {
+          setCollections((prev) => (prev || []).filter((c) => c.id !== collectionId))
+          toast({
+            title: "Collection Deleted",
+            description: "Collection has been successfully deleted.",
+          })
+        }}
         onRequestLoad={loadRequestInNewTab}
         onRequestDelete={(collectionId, requestId) => {
           setCollections((prev) =>
-            prev.map((collection) =>
+            (prev || []).map((collection) =>
               collection.id === collectionId
                 ? { ...collection, requests: collection.requests.filter((req) => req.id !== requestId) }
                 : collection,
             ),
           )
+          toast({
+            title: "Request Deleted",
+            description: "Request has been successfully deleted.",
+          })
         }}
         onEnvironmentChange={setActiveEnvironment}
-        onEnvironmentCreate={(environment) => setEnvironments((prev) => [...prev, environment])}
+        onEnvironmentCreate={(environment) => {
+          setEnvironments((prev) => [...(prev || []), environment])
+          toast({
+            title: "Environment Created",
+            description: `Successfully created environment: ${environment.name}`,
+          })
+        }}
         onEnvironmentDelete={(envId) => {
-          setEnvironments((prev) => prev.filter((env) => env.id !== envId))
+          setEnvironments((prev) => (prev || []).filter((env) => env.id !== envId))
           if (activeEnvironment === envId) {
             setActiveEnvironment("none")
           }
+          toast({
+            title: "Environment Deleted",
+            description: "Environment has been successfully deleted.",
+          })
         }}
         onEnvironmentUpdate={setEnvironments}
       />
@@ -452,6 +580,10 @@ export default function APIStudio() {
                     onWorkspaceCreate={(workspace) => {
                       setWorkspaces([...workspaces, workspace])
                       setCurrentWorkspace(workspace)
+                      toast({
+                        title: "Workspace Created",
+                        description: `Successfully created workspace: ${workspace.name}`,
+                      })
                     }}
                   />
                   <TeamManagement workspaceId={currentWorkspace.id} userRole={currentWorkspace.role || "member"} />
@@ -467,20 +599,14 @@ export default function APIStudio() {
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" className="relative h-8 w-8 rounded-full">
                   <Avatar className="h-8 w-8">
-                    <AvatarImage src={user.avatar_url || "/placeholder.svg"} alt={user.name} />
-                    <AvatarFallback>
-                      {user.name
-                        .split(" ")
-                        .map((n) => n[0])
-                        .join("")
-                        .toUpperCase()}
-                    </AvatarFallback>
+                    <AvatarImage src={user.avatar_url || "/placeholder.svg"} alt={user.name || "User"} />
+                    <AvatarFallback>{getUserInitials(user)}</AvatarFallback>
                   </Avatar>
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent className="w-56" align="end" forceMount>
                 <DropdownMenuItem className="flex-col items-start">
-                  <div className="font-medium">{user.name}</div>
+                  <div className="font-medium">{user.name || "User"}</div>
                   <div className="text-xs text-muted-foreground">{user.email}</div>
                   {isLocal && <div className="text-xs text-green-600 font-medium">Local Development</div>}
                 </DropdownMenuItem>
@@ -508,7 +634,7 @@ export default function APIStudio() {
           <div className="flex-1 min-h-0">
             <RequestForm
               activeTab={activeTab}
-              collections={collections}
+              collections={collections || []}
               loading={requestLoading}
               onRequestUpdate={updateActiveRequest}
               onSendRequest={sendRequest}
