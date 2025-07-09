@@ -3,9 +3,6 @@
 import { useState, useEffect } from "react"
 import { AuthForm } from "@/components/auth/auth-form"
 import { WorkspaceSelector } from "@/components/workspace/workspace-selector"
-import { TeamManagement } from "@/components/workspace/team-management"
-import { CodeGenerator } from "@/components/code-generator/code-generator"
-import { NetworkSettings } from "@/components/settings/network-settings"
 import { GitHubIntegration } from "@/components/github/github-integration"
 import { useAPIStudio } from "@/hooks/use-api-studio"
 import { RequestTabs } from "@/components/request-tabs"
@@ -27,7 +24,7 @@ import type { User as AuthUser, Workspace } from "@/types/auth"
 import { getCurrentUser, signOut, isLocalEnvironment } from "@/lib/auth"
 import { toast } from "@/hooks/use-toast"
 import { WorkspaceSetup } from "@/components/workspace/workspace-setup"
-import { useTheme } from "next-themes"
+import { useTheme } from "@/hooks/use-theme"
 
 export default function APIStudio() {
   const [user, setUser] = useState<AuthUser | null>(null)
@@ -202,6 +199,7 @@ export default function APIStudio() {
   }
 
   const updateActiveTab = (updates: Partial<typeof activeTab>) => {
+    if (!activeTab) return
     setTabs((prev) => prev.map((tab) => (tab.id === activeTabId ? { ...tab, ...updates } : tab)))
   }
 
@@ -287,84 +285,48 @@ export default function APIStudio() {
               bodyData[field.key] = field.value
             }
           })
-        } else if (activeTab.request.body.trim()) {
-          bodyData = { raw: replaceEnvironmentVariables(activeTab.request.body) }
         }
 
         requestOptions.body = JSON.stringify(bodyData)
       }
 
       const response = await fetch(url, requestOptions)
+      const responseText = await response.text()
       const endTime = Date.now()
-
-      const responseHeaders: Record<string, string> = {}
-      response.headers.forEach((value, key) => {
-        responseHeaders[key] = value
-      })
-
-      let responseText = await response.text()
-      let responseBody: any
-
-      // Try to parse as JSON, fallback to text
-      try {
-        responseBody = JSON.parse(responseText)
-        responseText = JSON.stringify(responseBody, null, 2)
-      } catch (e) {
-        // If not JSON, wrap in JSON structure
-        responseBody = { raw: responseText }
-        responseText = JSON.stringify(responseBody, null, 2)
-      }
-
-      const responseSize = new Blob([responseText]).size
 
       const responseData: ResponseData = {
         status: response.status,
         statusText: response.statusText,
-        headers: responseHeaders,
+        headers: Object.fromEntries(response.headers.entries()),
         body: responseText,
         time: endTime - startTime,
-        size: responseSize,
+        size: new Blob([responseText]).size,
       }
 
       updateActiveTab({ response: responseData })
 
-      // Save to history (skip for anonymous users)
-      if (currentWorkspace && user && currentWorkspace.id !== "anonymous-workspace") {
-        try {
-          await fetch(`/api/workspaces/${currentWorkspace.id}/history`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              method: activeTab.request.method,
-              url: activeTab.request.url,
-              headers: activeTab.request.headers,
-              body: activeTab.request.body,
-              response_status: response.status,
-              response_headers: responseHeaders,
-              response_body: responseText,
-              response_time: endTime - startTime,
-            }),
-          })
-        } catch (historyError) {
-          console.warn("Failed to save request to history:", historyError)
-        }
-      }
-
       toast({
-        title: "Request Completed",
-        description: `${response.status} ${response.statusText} • ${endTime - startTime}ms`,
+        title: "Request Sent",
+        description: `Response received with status ${response.status}`,
       })
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "Unknown error occurred"
+      const errorResponse: ResponseData = {
+        status: 0,
+        statusText: "Network Error",
+        headers: {},
+        body: JSON.stringify({ error: errorMessage }, null, 2),
+        time: Date.now() - startTime,
+        size: 0,
+      }
+
+      updateActiveTab({ response: errorResponse })
 
       toast({
         title: "Request Failed",
-        description: errorMessage.includes("fetch")
-          ? "Network error. Please check your connection and try again."
-          : errorMessage,
+        description: errorMessage,
         variant: "destructive",
       })
-      updateActiveTab({ response: null })
     } finally {
       setRequestLoading(false)
     }
@@ -471,8 +433,8 @@ export default function APIStudio() {
 
   // Helper function to get user initials safely
   const getUserInitials = (user: AuthUser) => {
-    if (!user.name) return "U"
-    return user.name
+    if (!user.full_name) return "U"
+    return user.full_name
       .split(" ")
       .map((n) => n[0])
       .join("")
@@ -493,307 +455,212 @@ export default function APIStudio() {
       "bg-indigo-500",
       "bg-teal-500",
     ]
-    const colorIndex = user.email.charCodeAt(0) % colors.length
+    const colorIndex = (user.email?.charCodeAt(0) || 0) % colors.length
     return { initials, color: colors[colorIndex] }
   }
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+      <div className="h-screen flex items-center justify-center">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
       </div>
     )
   }
 
   if (showAuth) {
-    return <AuthForm onSuccess={checkAuth} />
+    return (
+      <div className="h-screen flex items-center justify-center bg-background">
+        <AuthForm onSuccess={() => setShowAuth(false)} />
+      </div>
+    )
   }
 
   if (showWorkspaceSetup) {
     return (
-      <WorkspaceSetup
-        user={user}
-        onWorkspaceCreated={handleWorkspaceCreated}
-        onSkip={() => {
-          // Create anonymous workspace
-          const anonymousWorkspace: Workspace = {
-            id: "anonymous-workspace",
-            name: "My Workspace",
-            description: "Anonymous workspace",
-            owner_id: "anonymous",
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-            role: "owner",
-          }
-          setWorkspaces([anonymousWorkspace])
-          setCurrentWorkspace(anonymousWorkspace)
-          setShowWorkspaceSetup(false)
-        }}
-        onSignIn={() => setShowAuth(true)}
-      />
-    )
-  }
-
-  if (showGitHub) {
-    return (
-      <GitHubIntegration
-        workspace={currentWorkspace}
-        onClose={() => setShowGitHub(false)}
-        onCollectionImported={(collection) => {
-          setCollections((prev) => [...prev, collection])
-          toast({
-            title: "Collection Imported",
-            description: `Successfully imported ${collection.name} from GitHub`,
-          })
-        }}
-      />
-    )
-  }
-
-  if (!currentWorkspace) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <h2 className="text-2xl font-bold mb-4">No Workspace Selected</h2>
-          <p className="text-muted-foreground mb-4">Create or select a workspace to get started</p>
-          <WorkspaceSelector
-            workspaces={workspaces}
-            currentWorkspace={currentWorkspace}
-            onWorkspaceChange={setCurrentWorkspace}
-            onWorkspaceCreate={(workspace) => {
-              setWorkspaces([...workspaces, workspace])
-              setCurrentWorkspace(workspace)
-              toast({
-                title: "Workspace Created",
-                description: `Successfully created workspace: ${workspace.name}`,
-              })
-            }}
-          />
-        </div>
+      <div className="h-screen flex items-center justify-center bg-background">
+        <WorkspaceSetup
+          user={user}
+          onWorkspaceCreated={handleWorkspaceCreated}
+          onSkip={() => setShowWorkspaceSetup(false)}
+          onSignIn={() => setShowAuth(true)}
+        />
       </div>
     )
   }
 
-  if (!activeTab) return null
+  // Create a default tab if none exists
+  if (tabs.length === 0) {
+    createNewTab()
+  }
 
-  const defaultAvatar = user ? getDefaultAvatar(user) : { initials: "A", color: "bg-blue-500" }
+  // Get the current active tab or create a default one
+  const currentActiveTab = activeTab || {
+    id: "default",
+    name: "New Request",
+    request: {
+      id: "default",
+      name: "New Request",
+      method: "GET",
+      url: "",
+      headers: [],
+      body: "",
+      bodyType: "json",
+      files: [],
+      formData: [],
+      auth: { type: "none" },
+    },
+    response: null,
+    hasUnsavedChanges: false,
+    originalRequest: null,
+  }
 
   return (
-    <div className="flex h-screen bg-background">
-      <Sidebar
-        collections={collections || []}
-        environments={environments || []}
-        activeEnvironment={activeEnvironment}
-        onCollectionCreate={(collection) => {
-          setCollections((prev) => [...(prev || []), collection])
-          toast({
-            title: "Collection Created",
-            description: `Successfully created collection: ${collection.name}`,
-          })
-        }}
-        onCollectionDelete={(collectionId) => {
-          setCollections((prev) => (prev || []).filter((c) => c.id !== collectionId))
-          toast({
-            title: "Collection Deleted",
-            description: "Collection has been successfully deleted.",
-          })
-        }}
-        onRequestLoad={loadRequestInNewTab}
-        onRequestDelete={(collectionId, requestId) => {
-          setCollections((prev) =>
-            (prev || []).map((collection) =>
-              collection.id === collectionId
-                ? { ...collection, requests: collection.requests.filter((req) => req.id !== requestId) }
-                : collection,
-            ),
-          )
-          toast({
-            title: "Request Deleted",
-            description: "Request has been successfully deleted.",
-          })
-        }}
-        onEnvironmentChange={setActiveEnvironment}
-        onEnvironmentCreate={(environment) => {
-          setEnvironments((prev) => [...(prev || []), environment])
-          toast({
-            title: "Environment Created",
-            description: `Successfully created environment: ${environment.name}`,
-          })
-        }}
-        onEnvironmentDelete={(envId) => {
-          setEnvironments((prev) => (prev || []).filter((env) => env.id !== envId))
-          if (activeEnvironment === envId) {
-            setActiveEnvironment("none")
-          }
-          toast({
-            title: "Environment Deleted",
-            description: "Environment has been successfully deleted.",
-          })
-        }}
-        onEnvironmentUpdate={setEnvironments}
-      />
-
-      <div className="flex-1 flex flex-col">
-        {/* Header */}
-        <div className="border-b p-4 bg-muted/30">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-4">
-              {user && !isLocal && (
-                <>
-                  <WorkspaceSelector
-                    workspaces={workspaces}
-                    currentWorkspace={currentWorkspace}
-                    onWorkspaceChange={setCurrentWorkspace}
-                    onWorkspaceCreate={(workspace) => {
-                      setWorkspaces([...workspaces, workspace])
-                      setCurrentWorkspace(workspace)
-                      toast({
-                        title: "Workspace Created",
-                        description: `Successfully created workspace: ${workspace.name}`,
-                      })
-                    }}
-                  />
-                  <TeamManagement workspaceId={currentWorkspace.id} userRole={currentWorkspace.role || "member"} />
-                  <NetworkSettings workspaceId={currentWorkspace.id} />
-                </>
-              )}
-              {activeTab && (
-                <CodeGenerator request={activeTab.request} replaceEnvironmentVariables={replaceEnvironmentVariables} />
-              )}
-              <Button variant="outline" onClick={() => setShowGitHub(true)}>
-                <Github className="w-4 h-4 mr-2" />
-                GitHub
-              </Button>
-            </div>
-
+    <div className="h-screen flex flex-col bg-background">
+      {/* Header */}
+      <header className="border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+        <div className="flex h-14 items-center px-4">
+          <div className="flex items-center space-x-4">
             <div className="flex items-center space-x-2">
-              {!user && (
-                <Button variant="outline" onClick={() => setShowAuth(true)}>
-                  Sign In
-                </Button>
-              )}
-
-              {user ? (
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" className="relative h-8 w-8 rounded-full">
-                      <Avatar className="h-8 w-8">
-                        <AvatarImage src={user.avatar_url || "/placeholder.svg"} alt={user.name || "User"} />
-                        <AvatarFallback className={`${defaultAvatar.color} text-white`}>
-                          {defaultAvatar.initials}
-                        </AvatarFallback>
-                      </Avatar>
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent className="w-56" align="end" forceMount>
-                    <DropdownMenuItem className="flex-col items-start">
-                      <div className="font-medium">{user.name || "User"}</div>
-                      <div className="text-xs text-muted-foreground">{user.email}</div>
-                      {isLocal && <div className="text-xs text-green-600 font-medium">Local Development</div>}
-                    </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem>
-                      <User className="mr-2 h-4 w-4" />
-                      <span>Profile</span>
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => setShowGitHub(true)}>
-                      <Github className="mr-2 h-4 w-4" />
-                      <span>GitHub Integration</span>
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
-                      {theme === "dark" ? (
-                        <>
-                          <Sun className="mr-2 h-4 w-4" />
-                          <span>Light Mode</span>
-                        </>
-                      ) : (
-                        <>
-                          <Moon className="mr-2 h-4 w-4" />
-                          <span>Dark Mode</span>
-                        </>
-                      )}
-                    </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem onClick={handleSignOut}>
-                      <LogOut className="mr-2 h-4 w-4" />
-                      <span>Sign out</span>
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              ) : (
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" className="relative h-8 w-8 rounded-full">
-                      <Avatar className="h-8 w-8">
-                        <AvatarFallback className="bg-blue-500 text-white">A</AvatarFallback>
-                      </Avatar>
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent className="w-56" align="end" forceMount>
-                    <DropdownMenuItem className="flex-col items-start">
-                      <div className="font-medium">Anonymous User</div>
-                      <div className="text-xs text-muted-foreground">Using local workspace</div>
-                    </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem onClick={() => setShowAuth(true)}>
-                      <User className="mr-2 h-4 w-4" />
-                      <span>Sign In</span>
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => setShowGitHub(true)}>
-                      <Github className="mr-2 h-4 w-4" />
-                      <span>GitHub Integration</span>
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
-                      {theme === "dark" ? (
-                        <>
-                          <Sun className="mr-2 h-4 w-4" />
-                          <span>Light Mode</span>
-                        </>
-                      ) : (
-                        <>
-                          <Moon className="mr-2 h-4 w-4" />
-                          <span>Dark Mode</span>
-                        </>
-                      )}
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              )}
+              <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
+                <span className="text-primary-foreground font-bold text-sm">AS</span>
+              </div>
+              <span className="font-semibold">API Studio</span>
             </div>
+            {currentWorkspace && (
+              <div className="flex items-center space-x-2">
+                <span className="text-muted-foreground">/</span>
+                <WorkspaceSelector
+                  workspaces={workspaces}
+                  currentWorkspace={currentWorkspace}
+                  onWorkspaceChange={setCurrentWorkspace}
+                  onWorkspaceCreate={(workspace) => {
+                    setWorkspaces([...workspaces, workspace])
+                    setCurrentWorkspace(workspace)
+                    toast({
+                      title: "Workspace Created",
+                      description: `Successfully created workspace: ${workspace.name}`,
+                    })
+                  }}
+                />
+              </div>
+            )}
+          </div>
+
+          <div className="ml-auto flex items-center space-x-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setShowGitHub(true)}
+              className="text-muted-foreground hover:text-foreground"
+            >
+              <Github className="w-4 h-4 mr-2" />
+              GitHub
+            </Button>
+
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+              className="text-muted-foreground hover:text-foreground"
+            >
+              {theme === "dark" ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+            </Button>
+
+            {user ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" className="relative h-8 w-8 rounded-full">
+                    <Avatar className="h-8 w-8">
+                      <AvatarImage src={user.avatar_url || "/placeholder-user.jpg"} alt={user.full_name || "User"} />
+                      <AvatarFallback className={`${getDefaultAvatar(user).color} text-white`}>
+                        {getDefaultAvatar(user).initials}
+                      </AvatarFallback>
+                    </Avatar>
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent className="w-56" align="end" forceMount>
+                  <div className="flex items-center justify-start gap-2 p-2">
+                    <div className="flex flex-col space-y-1 leading-none">
+                      {user.full_name && <p className="font-medium">{user.full_name}</p>}
+                      {user.email && <p className="w-[200px] truncate text-sm text-muted-foreground">{user.email}</p>}
+                    </div>
+                  </div>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem>
+                    <User className="mr-2 h-4 w-4" />
+                    <span>Profile</span>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={handleSignOut}>
+                    <LogOut className="mr-2 h-4 w-4" />
+                    <span>Sign out</span>
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : (
+              <Button variant="outline" size="sm" onClick={() => setShowAuth(true)}>
+                Sign In
+              </Button>
+            )}
           </div>
         </div>
+      </header>
 
-        <RequestTabs
-          tabs={tabs}
-          activeTabId={activeTabId}
-          onTabChange={setActiveTabId}
-          onTabClose={closeTab}
-          onNewTab={createNewTab}
+      {/* Main Content */}
+      <div className="flex-1 flex overflow-hidden">
+        <Sidebar
+          collections={collections}
+          setCollections={setCollections}
+          environments={environments}
+          setEnvironments={setEnvironments}
+          activeEnvironment={activeEnvironment}
+          setActiveEnvironment={setActiveEnvironment}
+          onRequestSelect={loadRequestInNewTab}
+          currentWorkspace={currentWorkspace}
+          user={user}
         />
 
-        {/* Main Content */}
-        <div className="flex-1 flex flex-col">
-          {/* Request Form - Top Half */}
-          <div className="flex-1 min-h-0">
-            <RequestForm
-              activeTab={activeTab}
-              collections={collections || []}
-              loading={requestLoading}
-              onRequestUpdate={updateActiveRequest}
-              onSendRequest={sendRequest}
-              onSaveRequest={saveRequest}
-            />
-          </div>
+        <div className="flex-1 flex flex-col overflow-hidden">
+          <RequestTabs
+            tabs={tabs}
+            activeTabId={activeTabId}
+            onTabChange={setActiveTabId}
+            onTabClose={closeTab}
+            onNewTab={createNewTab}
+          />
 
-          {/* Response Panel - Bottom Half */}
-          <div className="flex-1 min-h-0 border-t">
-            <ResponsePanel
-              response={activeTab.response}
-              onResponseUpdate={(response) => updateActiveTab({ response })}
-            />
+          <div className="flex-1 flex overflow-hidden">
+            <div className="flex-1 flex flex-col border-r">
+              <RequestForm
+                activeTab={currentActiveTab}
+                collections={collections || []}
+                loading={requestLoading}
+                onRequestUpdate={updateActiveRequest}
+                onSendRequest={sendRequest}
+                onSaveRequest={saveRequest}
+              />
+            </div>
+
+            <div className="flex-1 flex flex-col">
+              <ResponsePanel response={currentActiveTab?.response || null} />
+            </div>
           </div>
         </div>
       </div>
+
+      {/* Modals */}
+      {showGitHub && (
+        <GitHubIntegration
+          workspace={currentWorkspace}
+          onClose={() => setShowGitHub(false)}
+          onCollectionImported={(collection) => {
+            setCollections((prev) => [...prev, collection])
+            toast({
+              title: "Collection Imported",
+              description: `Successfully imported ${collection.name} from GitHub`,
+            })
+          }}
+        />
+      )}
     </div>
   )
 }

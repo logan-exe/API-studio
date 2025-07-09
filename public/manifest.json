@@ -1,0 +1,76 @@
+{
+  "name": "API Studio - Postman Clone",
+  "short_name": "API Studio",
+  "description": "Professional API testing and development tool",
+  "start_url": "/app",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#000000",
+  "orientation": "portrait-primary",
+  "scope": "/",
+  "lang": "en",
+  "categories": ["developer", "productivity", "utilities"],
+  "icons": [
+    {
+      "src": "/favicon.ico",
+      "sizes": "16x16 32x32",
+      "type": "image/x-icon"
+    },
+    {
+      "src": "/placeholder.svg?height=192&width=192",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/placeholder.svg?height=512&width=512",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "New Request",
+      "short_name": "New",
+      "description": "Create a new API request",
+      "url": "/app?action=new",
+      "icons": [
+        {
+          "src": "/placeholder.svg?height=96&width=96",
+          "sizes": "96x96",
+          "type": "image/svg+xml"
+        }
+      ]
+    },
+    {
+      "name": "Collections",
+      "short_name": "Collections",
+      "description": "View your API collections",
+      "url": "/app?tab=collections",
+      "icons": [
+        {
+          "src": "/placeholder.svg?height=96&width=96",
+          "sizes": "96x96",
+          "type": "image/svg+xml"
+        }
+      ]
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "/placeholder.svg?height=640&width=1280",
+      "sizes": "1280x640",
+      "type": "image/svg+xml",
+      "form_factor": "wide",
+      "label": "API Studio main interface"
+    },
+    {
+      "src": "/placeholder.svg?height=1136&width=640",
+      "sizes": "640x1136",
+      "type": "image/svg+xml",
+      "form_factor": "narrow",
+      "label": "API Studio mobile interface"
+    }
+  ]
+}

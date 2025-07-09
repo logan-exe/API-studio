@@ -2,539 +2,557 @@
 
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent } from "@/components/ui/card"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { Github, GitBranch, GitCommit, FileText, Download, Upload, CheckCircle, Folder } from "lucide-react"
-import type { Workspace, Collection } from "@/types/auth"
+import { Separator } from "@/components/ui/separator"
+import {
+  Github,
+  GitBranch,
+  GitCommit,
+  Star,
+  ForkliftIcon as Fork,
+  Download,
+  Upload,
+  Search,
+  Calendar,
+  User,
+  FileText,
+  Plus,
+  Minus,
+} from "lucide-react"
 import { toast } from "@/hooks/use-toast"
 
-interface GitHubIntegrationProps {
-  workspace: Workspace | null
-  onClose: () => void
-  onCollectionImported: (collection: Collection) => void
-}
-
-interface GitHubRepo {
-  id: string
+interface Repository {
+  id: number
   name: string
   full_name: string
   description: string
-  default_branch: string
+  stars: number
+  forks: number
+  language: string
   updated_at: string
+  private: boolean
 }
 
-interface GitHubBranch {
+interface Branch {
   name: string
   commit: {
     sha: string
     message: string
-    author: {
-      name: string
-      date: string
-    }
-  }
-}
-
-interface GitHubCommit {
-  sha: string
-  message: string
-  author: {
-    name: string
+    author: string
     date: string
   }
-  files: {
-    filename: string
-    status: string
-    additions: number
-    deletions: number
-  }[]
 }
 
-export function GitHubIntegration({ workspace, onClose, onCollectionImported }: GitHubIntegrationProps) {
-  const [connected, setConnected] = useState(false)
+interface Commit {
+  sha: string
+  message: string
+  author: string
+  date: string
+  files_changed: number
+  additions: number
+  deletions: number
+}
+
+export function GitHubIntegration() {
+  const [isConnected, setIsConnected] = useState(false)
+  const [repositories, setRepositories] = useState<Repository[]>([])
+  const [selectedRepo, setSelectedRepo] = useState<Repository | null>(null)
+  const [branches, setBranches] = useState<Branch[]>([])
+  const [selectedBranch, setSelectedBranch] = useState<Branch | null>(null)
+  const [commits, setCommits] = useState<Commit[]>([])
+  const [searchTerm, setSearchTerm] = useState("")
   const [loading, setLoading] = useState(false)
-  const [repos, setRepos] = useState<GitHubRepo[]>([])
-  const [selectedRepo, setSelectedRepo] = useState<GitHubRepo | null>(null)
-  const [branches, setBranches] = useState<GitHubBranch[]>([])
-  const [selectedBranch, setSelectedBranch] = useState<string>("")
-  const [commits, setCommits] = useState<GitHubCommit[]>([])
-  const [activeTab, setActiveTab] = useState("connect")
 
   // Mock data for demonstration
-  const mockRepos: GitHubRepo[] = [
+  const mockRepositories: Repository[] = [
     {
-      id: "1",
+      id: 1,
       name: "api-collections",
       full_name: "user/api-collections",
-      description: "API collection repository",
-      default_branch: "main",
+      description: "Collection of API requests for various services",
+      stars: 45,
+      forks: 12,
+      language: "JSON",
       updated_at: "2024-01-15T10:30:00Z",
+      private: false,
     },
     {
-      id: "2",
+      id: 2,
       name: "microservices-api",
       full_name: "user/microservices-api",
-      description: "Microservices API documentation",
-      default_branch: "main",
+      description: "API documentation and testing for microservices",
+      stars: 128,
+      forks: 34,
+      language: "JavaScript",
       updated_at: "2024-01-14T15:45:00Z",
+      private: true,
     },
     {
-      id: "3",
+      id: 3,
       name: "rest-api-tests",
       full_name: "user/rest-api-tests",
-      description: "REST API test collections",
-      default_branch: "develop",
+      description: "Automated testing suite for REST APIs",
+      stars: 67,
+      forks: 23,
+      language: "TypeScript",
       updated_at: "2024-01-13T09:20:00Z",
+      private: false,
     },
   ]
 
-  const mockBranches: GitHubBranch[] = [
+  const mockBranches: Branch[] = [
     {
       name: "main",
       commit: {
         sha: "abc123",
-        message: "Update API endpoints",
-        author: {
-          name: "John Doe",
-          date: "2024-01-15T10:30:00Z",
-        },
+        message: "Add new payment API endpoints",
+        author: "John Doe",
+        date: "2024-01-15T10:30:00Z",
+      },
+    },
+    {
+      name: "feature/auth-endpoints",
+      commit: {
+        sha: "def456",
+        message: "Implement OAuth2 authentication flow",
+        author: "Jane Smith",
+        date: "2024-01-14T16:20:00Z",
       },
     },
     {
       name: "develop",
       commit: {
-        sha: "def456",
-        message: "Add new authentication endpoints",
-        author: {
-          name: "Jane Smith",
-          date: "2024-01-14T16:20:00Z",
-        },
-      },
-    },
-    {
-      name: "feature/user-api",
-      commit: {
         sha: "ghi789",
-        message: "Implement user management API",
-        author: {
-          name: "Bob Johnson",
-          date: "2024-01-13T14:15:00Z",
-        },
+        message: "Update API documentation",
+        author: "Bob Johnson",
+        date: "2024-01-13T14:15:00Z",
       },
     },
   ]
 
-  const mockCommits: GitHubCommit[] = [
+  const mockCommits: Commit[] = [
     {
       sha: "abc123",
-      message: "Update API endpoints",
-      author: {
-        name: "John Doe",
-        date: "2024-01-15T10:30:00Z",
-      },
-      files: [
-        {
-          filename: "collections/users.json",
-          status: "modified",
-          additions: 15,
-          deletions: 3,
-        },
-        {
-          filename: "collections/auth.json",
-          status: "added",
-          additions: 45,
-          deletions: 0,
-        },
-      ],
+      message: "Add new payment API endpoints",
+      author: "John Doe",
+      date: "2024-01-15T10:30:00Z",
+      files_changed: 3,
+      additions: 45,
+      deletions: 12,
     },
     {
       sha: "def456",
-      message: "Add new authentication endpoints",
-      author: {
-        name: "Jane Smith",
-        date: "2024-01-14T16:20:00Z",
-      },
-      files: [
-        {
-          filename: "collections/auth.json",
-          status: "modified",
-          additions: 23,
-          deletions: 5,
-        },
-      ],
+      message: "Implement OAuth2 authentication flow",
+      author: "Jane Smith",
+      date: "2024-01-14T16:20:00Z",
+      files_changed: 5,
+      additions: 78,
+      deletions: 23,
+    },
+    {
+      sha: "ghi789",
+      message: "Update API documentation",
+      author: "Bob Johnson",
+      date: "2024-01-13T14:15:00Z",
+      files_changed: 2,
+      additions: 34,
+      deletions: 8,
+    },
+    {
+      sha: "jkl012",
+      message: "Fix authentication middleware bug",
+      author: "Alice Wilson",
+      date: "2024-01-12T11:45:00Z",
+      files_changed: 1,
+      additions: 15,
+      deletions: 20,
     },
   ]
 
   const handleConnect = async () => {
     setLoading(true)
-    try {
-      // Simulate GitHub OAuth flow
-      await new Promise((resolve) => setTimeout(resolve, 2000))
-      setConnected(true)
-      setRepos(mockRepos)
-      setActiveTab("repos")
-      toast({
-        title: "GitHub Connected",
-        description: "Successfully connected to GitHub",
-      })
-    } catch (error) {
-      toast({
-        title: "Connection Failed",
-        description: "Failed to connect to GitHub",
-        variant: "destructive",
-      })
-    } finally {
+    // Simulate GitHub OAuth flow
+    setTimeout(() => {
+      setIsConnected(true)
+      setRepositories(mockRepositories)
       setLoading(false)
-    }
+      toast({
+        title: "Connected to GitHub",
+        description: "Successfully connected to your GitHub account",
+      })
+    }, 2000)
   }
 
-  const handleRepoSelect = async (repo: GitHubRepo) => {
+  const handleSelectRepository = (repo: Repository) => {
     setSelectedRepo(repo)
-    setLoading(true)
-    try {
-      // Simulate fetching branches
-      await new Promise((resolve) => setTimeout(resolve, 1000))
-      setBranches(mockBranches)
-      setSelectedBranch(repo.default_branch)
-      setActiveTab("branches")
-    } catch (error) {
-      toast({
-        title: "Error",
-        description: "Failed to fetch branches",
-        variant: "destructive",
-      })
-    } finally {
-      setLoading(false)
-    }
+    setBranches(mockBranches)
+    setSelectedBranch(mockBranches[0])
+    setCommits(mockCommits)
   }
 
-  const handleBranchSelect = async (branchName: string) => {
-    setSelectedBranch(branchName)
-    setLoading(true)
-    try {
-      // Simulate fetching commits
-      await new Promise((resolve) => setTimeout(resolve, 1000))
-      setCommits(mockCommits)
-      setActiveTab("commits")
-    } catch (error) {
-      toast({
-        title: "Error",
-        description: "Failed to fetch commits",
-        variant: "destructive",
-      })
-    } finally {
-      setLoading(false)
-    }
+  const handleSelectBranch = (branch: Branch) => {
+    setSelectedBranch(branch)
+    setCommits(mockCommits)
   }
 
-  const handleImportCollection = async (filename: string) => {
-    setLoading(true)
-    try {
-      // Simulate importing collection
-      await new Promise((resolve) => setTimeout(resolve, 1500))
-
-      const collection: Collection = {
-        id: Date.now().toString(),
-        name: filename.replace(".json", ""),
-        description: `Imported from ${selectedRepo?.full_name}/${selectedBranch}`,
-        requests: [],
-        workspace_id: workspace?.id || "",
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      }
-
-      onCollectionImported(collection)
-      toast({
-        title: "Collection Imported",
-        description: `Successfully imported ${filename}`,
-      })
-    } catch (error) {
-      toast({
-        title: "Import Failed",
-        description: "Failed to import collection",
-        variant: "destructive",
-      })
-    } finally {
-      setLoading(false)
-    }
+  const handleImportCollection = (commitSha: string) => {
+    toast({
+      title: "Collection Imported",
+      description: `Successfully imported collection from commit ${commitSha.substring(0, 7)}`,
+    })
   }
 
-  const handleSyncToGitHub = async () => {
-    setLoading(true)
-    try {
-      // Simulate syncing to GitHub
-      await new Promise((resolve) => setTimeout(resolve, 2000))
-      toast({
-        title: "Sync Complete",
-        description: "Collections synced to GitHub successfully",
-      })
-    } catch (error) {
-      toast({
-        title: "Sync Failed",
-        description: "Failed to sync to GitHub",
-        variant: "destructive",
-      })
-    } finally {
-      setLoading(false)
-    }
+  const handleSyncToGitHub = () => {
+    toast({
+      title: "Synced to GitHub",
+      description: "Your collections have been synced to GitHub",
+    })
+  }
+
+  const filteredRepositories = repositories.filter(
+    (repo) =>
+      repo.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      repo.description?.toLowerCase().includes(searchTerm.toLowerCase()),
+  )
+
+  const formatDate = (dateString: string) => {
+    return new Date(dateString).toLocaleDateString("en-US", {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    })
   }
 
   return (
-    <Dialog open={true} onOpenChange={onClose}>
-      <DialogContent className="max-w-4xl max-h-[80vh]">
-        <DialogHeader>
-          <DialogTitle className="flex items-center space-x-2">
-            <Github className="w-5 h-5" />
-            <span>GitHub Integration</span>
-          </DialogTitle>
-        </DialogHeader>
+    <div className="h-full flex flex-col">
+      <div className="p-6 border-b">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-2xl font-bold flex items-center space-x-2">
+              <Github className="h-6 w-6" />
+              <span>GitHub Integration</span>
+            </h2>
+            <p className="text-muted-foreground mt-1">
+              Connect your GitHub repositories to sync and manage API collections
+            </p>
+          </div>
+          {isConnected && (
+            <Button onClick={handleSyncToGitHub} className="flex items-center space-x-2">
+              <Upload className="h-4 w-4" />
+              <span>Sync to GitHub</span>
+            </Button>
+          )}
+        </div>
+      </div>
 
-        <div className="flex-1 overflow-hidden">
-          <Tabs value={activeTab} onValueChange={setActiveTab} className="h-full flex flex-col">
-            <TabsList className="grid w-full grid-cols-4">
-              <TabsTrigger value="connect" className="flex items-center space-x-2">
-                <Github className="w-4 h-4" />
-                <span>Connect</span>
-              </TabsTrigger>
-              <TabsTrigger value="repos" disabled={!connected} className="flex items-center space-x-2">
-                <Folder className="w-4 h-4" />
-                <span>Repositories</span>
-              </TabsTrigger>
-              <TabsTrigger value="branches" disabled={!selectedRepo} className="flex items-center space-x-2">
-                <GitBranch className="w-4 h-4" />
-                <span>Branches</span>
-              </TabsTrigger>
-              <TabsTrigger value="commits" disabled={!selectedBranch} className="flex items-center space-x-2">
-                <GitCommit className="w-4 h-4" />
-                <span>Commits</span>
-              </TabsTrigger>
+      <div className="flex-1 min-h-0">
+        {!isConnected ? (
+          <div className="h-full flex items-center justify-center">
+            <Card className="w-full max-w-md">
+              <CardHeader className="text-center">
+                <div className="w-16 h-16 bg-muted rounded-full flex items-center justify-center mx-auto mb-4">
+                  <Github className="h-8 w-8" />
+                </div>
+                <CardTitle>Connect to GitHub</CardTitle>
+                <CardDescription>
+                  Connect your GitHub account to sync collections, manage versions, and collaborate with your team
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Button onClick={handleConnect} className="w-full" disabled={loading}>
+                  {loading ? "Connecting..." : "Connect with GitHub"}
+                </Button>
+                <p className="text-xs text-muted-foreground text-center mt-4">
+                  We'll redirect you to GitHub to authorize the connection
+                </p>
+              </CardContent>
+            </Card>
+          </div>
+        ) : (
+          <Tabs defaultValue="repositories" className="h-full flex flex-col">
+            <TabsList className="mx-6 mt-4">
+              <TabsTrigger value="repositories">Repositories</TabsTrigger>
+              <TabsTrigger value="branches">Branches</TabsTrigger>
+              <TabsTrigger value="commits">Commits</TabsTrigger>
+              <TabsTrigger value="sync">Sync</TabsTrigger>
             </TabsList>
 
-            <div className="flex-1 mt-4 overflow-hidden">
-              <TabsContent value="connect" className="h-full">
-                <div className="flex flex-col items-center justify-center h-full space-y-6">
-                  <div className="w-24 h-24 bg-slate-100 rounded-full flex items-center justify-center">
-                    <Github className="w-12 h-12 text-slate-600" />
+            <div className="flex-1 min-h-0 p-6">
+              <TabsContent value="repositories" className="h-full mt-0">
+                <div className="space-y-4 h-full flex flex-col">
+                  <div className="flex items-center space-x-4">
+                    <div className="relative flex-1">
+                      <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        placeholder="Search repositories..."
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        className="pl-8"
+                      />
+                    </div>
+                    <Badge variant="secondary">{filteredRepositories.length} repositories</Badge>
                   </div>
 
-                  {!connected ? (
+                  <ScrollArea className="flex-1">
+                    <div className="space-y-3">
+                      {filteredRepositories.map((repo) => (
+                        <Card
+                          key={repo.id}
+                          className={`cursor-pointer transition-colors hover:bg-muted/50 ${
+                            selectedRepo?.id === repo.id ? "ring-2 ring-primary" : ""
+                          }`}
+                          onClick={() => handleSelectRepository(repo)}
+                        >
+                          <CardContent className="p-4">
+                            <div className="flex items-start justify-between">
+                              <div className="space-y-2 flex-1">
+                                <div className="flex items-center space-x-2">
+                                  <h3 className="font-medium">{repo.name}</h3>
+                                  {repo.private && (
+                                    <Badge variant="secondary" className="text-xs">
+                                      Private
+                                    </Badge>
+                                  )}
+                                </div>
+                                {repo.description && (
+                                  <p className="text-sm text-muted-foreground">{repo.description}</p>
+                                )}
+                                <div className="flex items-center space-x-4 text-xs text-muted-foreground">
+                                  <div className="flex items-center space-x-1">
+                                    <div className="w-2 h-2 bg-blue-500 rounded-full" />
+                                    <span>{repo.language}</span>
+                                  </div>
+                                  <div className="flex items-center space-x-1">
+                                    <Star className="h-3 w-3" />
+                                    <span>{repo.stars}</span>
+                                  </div>
+                                  <div className="flex items-center space-x-1">
+                                    <Fork className="h-3 w-3" />
+                                    <span>{repo.forks}</span>
+                                  </div>
+                                  <div className="flex items-center space-x-1">
+                                    <Calendar className="h-3 w-3" />
+                                    <span>{formatDate(repo.updated_at)}</span>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </div>
+                  </ScrollArea>
+                </div>
+              </TabsContent>
+
+              <TabsContent value="branches" className="h-full mt-0">
+                <div className="space-y-4 h-full flex flex-col">
+                  {selectedRepo ? (
                     <>
-                      <div className="text-center">
-                        <h3 className="text-xl font-semibold mb-2">Connect to GitHub</h3>
-                        <p className="text-slate-600 mb-6">
-                          Connect your GitHub account to sync API collections, manage branches, and track commits
-                        </p>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h3 className="font-medium">{selectedRepo.name}</h3>
+                          <p className="text-sm text-muted-foreground">{branches.length} branches</p>
+                        </div>
                       </div>
 
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-                        <Card>
-                          <CardContent className="p-4 text-center">
-                            <Download className="w-8 h-8 text-blue-600 mx-auto mb-2" />
-                            <h4 className="font-medium">Import Collections</h4>
-                            <p className="text-sm text-slate-600">Import API collections from your repositories</p>
-                          </CardContent>
-                        </Card>
-                        <Card>
-                          <CardContent className="p-4 text-center">
-                            <Upload className="w-8 h-8 text-green-600 mx-auto mb-2" />
-                            <h4 className="font-medium">Sync Collections</h4>
-                            <p className="text-sm text-slate-600">Push your collections back to GitHub</p>
-                          </CardContent>
-                        </Card>
-                        <Card>
-                          <CardContent className="p-4 text-center">
-                            <GitBranch className="w-8 h-8 text-purple-600 mx-auto mb-2" />
-                            <h4 className="font-medium">Branch Management</h4>
-                            <p className="text-sm text-slate-600">Work with different branches and commits</p>
-                          </CardContent>
-                        </Card>
-                      </div>
-
-                      <Button onClick={handleConnect} disabled={loading} size="lg">
-                        {loading ? "Connecting..." : "Connect GitHub Account"}
-                        <Github className="ml-2 w-4 h-4" />
-                      </Button>
+                      <ScrollArea className="flex-1">
+                        <div className="space-y-3">
+                          {branches.map((branch) => (
+                            <Card
+                              key={branch.name}
+                              className={`cursor-pointer transition-colors hover:bg-muted/50 ${
+                                selectedBranch?.name === branch.name ? "ring-2 ring-primary" : ""
+                              }`}
+                              onClick={() => handleSelectBranch(branch)}
+                            >
+                              <CardContent className="p-4">
+                                <div className="flex items-center justify-between">
+                                  <div className="space-y-2 flex-1">
+                                    <div className="flex items-center space-x-2">
+                                      <GitBranch className="h-4 w-4" />
+                                      <span className="font-medium">{branch.name}</span>
+                                      {branch.name === "main" && (
+                                        <Badge variant="default" className="text-xs">
+                                          Default
+                                        </Badge>
+                                      )}
+                                    </div>
+                                    <div className="text-sm text-muted-foreground">
+                                      <div className="flex items-center space-x-2">
+                                        <GitCommit className="h-3 w-3" />
+                                        <span>{branch.commit.message}</span>
+                                      </div>
+                                      <div className="flex items-center space-x-4 mt-1 text-xs">
+                                        <div className="flex items-center space-x-1">
+                                          <User className="h-3 w-3" />
+                                          <span>{branch.commit.author}</span>
+                                        </div>
+                                        <div className="flex items-center space-x-1">
+                                          <Calendar className="h-3 w-3" />
+                                          <span>{formatDate(branch.commit.date)}</span>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                              </CardContent>
+                            </Card>
+                          ))}
+                        </div>
+                      </ScrollArea>
                     </>
                   ) : (
-                    <div className="text-center">
-                      <div className="flex items-center justify-center space-x-2 text-green-600 mb-4">
-                        <CheckCircle className="w-6 h-6" />
-                        <span className="text-lg font-medium">Connected to GitHub</span>
+                    <div className="h-full flex items-center justify-center">
+                      <div className="text-center">
+                        <GitBranch className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
+                        <p className="text-muted-foreground">Select a repository to view branches</p>
                       </div>
-                      <p className="text-slate-600 mb-6">You can now access your repositories and manage collections</p>
-                      <Button onClick={() => setActiveTab("repos")}>Browse Repositories</Button>
                     </div>
                   )}
                 </div>
               </TabsContent>
 
-              <TabsContent value="repos" className="h-full">
+              <TabsContent value="commits" className="h-full mt-0">
                 <div className="space-y-4 h-full flex flex-col">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-lg font-semibold">Your Repositories</h3>
-                    <Button onClick={handleSyncToGitHub} variant="outline" disabled={loading}>
-                      <Upload className="w-4 h-4 mr-2" />
-                      Sync to GitHub
-                    </Button>
-                  </div>
+                  {selectedBranch ? (
+                    <>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h3 className="font-medium">
+                            {selectedRepo?.name} / {selectedBranch.name}
+                          </h3>
+                          <p className="text-sm text-muted-foreground">{commits.length} commits</p>
+                        </div>
+                      </div>
 
-                  <ScrollArea className="flex-1">
-                    <div className="space-y-3">
-                      {repos.map((repo) => (
-                        <Card key={repo.id} className="cursor-pointer hover:shadow-md transition-shadow">
-                          <CardContent className="p-4">
-                            <div className="flex items-center justify-between">
-                              <div className="flex-1">
-                                <div className="flex items-center space-x-2 mb-2">
-                                  <Folder className="w-4 h-4 text-blue-600" />
-                                  <h4 className="font-medium">{repo.name}</h4>
-                                  <Badge variant="secondary">{repo.default_branch}</Badge>
-                                </div>
-                                <p className="text-sm text-slate-600 mb-2">{repo.description}</p>
-                                <p className="text-xs text-slate-500">
-                                  Updated {new Date(repo.updated_at).toLocaleDateString()}
-                                </p>
-                              </div>
-                              <Button onClick={() => handleRepoSelect(repo)} disabled={loading}>
-                                Select
-                              </Button>
-                            </div>
-                          </CardContent>
-                        </Card>
-                      ))}
-                    </div>
-                  </ScrollArea>
-                </div>
-              </TabsContent>
-
-              <TabsContent value="branches" className="h-full">
-                <div className="space-y-4 h-full flex flex-col">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h3 className="text-lg font-semibold">Branches</h3>
-                      <p className="text-sm text-slate-600">{selectedRepo?.full_name}</p>
-                    </div>
-                    <Button onClick={() => setActiveTab("repos")} variant="outline">
-                      Back to Repos
-                    </Button>
-                  </div>
-
-                  <ScrollArea className="flex-1">
-                    <div className="space-y-3">
-                      {branches.map((branch) => (
-                        <Card key={branch.name} className="cursor-pointer hover:shadow-md transition-shadow">
-                          <CardContent className="p-4">
-                            <div className="flex items-center justify-between">
-                              <div className="flex-1">
-                                <div className="flex items-center space-x-2 mb-2">
-                                  <GitBranch className="w-4 h-4 text-green-600" />
-                                  <h4 className="font-medium">{branch.name}</h4>
-                                  {branch.name === selectedRepo?.default_branch && (
-                                    <Badge variant="default">Default</Badge>
-                                  )}
-                                </div>
-                                <p className="text-sm text-slate-600 mb-1">{branch.commit.message}</p>
-                                <p className="text-xs text-slate-500">
-                                  {branch.commit.author.name} •{" "}
-                                  {new Date(branch.commit.author.date).toLocaleDateString()}
-                                </p>
-                              </div>
-                              <Button onClick={() => handleBranchSelect(branch.name)} disabled={loading}>
-                                View Commits
-                              </Button>
-                            </div>
-                          </CardContent>
-                        </Card>
-                      ))}
-                    </div>
-                  </ScrollArea>
-                </div>
-              </TabsContent>
-
-              <TabsContent value="commits" className="h-full">
-                <div className="space-y-4 h-full flex flex-col">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h3 className="text-lg font-semibold">Recent Commits</h3>
-                      <p className="text-sm text-slate-600">
-                        {selectedRepo?.full_name} / {selectedBranch}
-                      </p>
-                    </div>
-                    <Button onClick={() => setActiveTab("branches")} variant="outline">
-                      Back to Branches
-                    </Button>
-                  </div>
-
-                  <ScrollArea className="flex-1">
-                    <div className="space-y-4">
-                      {commits.map((commit) => (
-                        <Card key={commit.sha}>
-                          <CardContent className="p-4">
-                            <div className="flex items-start space-x-3">
-                              <GitCommit className="w-5 h-5 text-slate-600 mt-0.5" />
-                              <div className="flex-1">
-                                <h4 className="font-medium mb-1">{commit.message}</h4>
-                                <p className="text-sm text-slate-600 mb-3">
-                                  {commit.author.name} • {new Date(commit.author.date).toLocaleDateString()}
-                                </p>
-
-                                <div className="space-y-2">
-                                  <h5 className="text-sm font-medium">Changed Files:</h5>
-                                  {commit.files.map((file, index) => (
-                                    <div
-                                      key={index}
-                                      className="flex items-center justify-between p-2 bg-slate-50 rounded"
-                                    >
-                                      <div className="flex items-center space-x-2">
-                                        <FileText className="w-4 h-4 text-slate-600" />
-                                        <span className="text-sm font-mono">{file.filename}</span>
-                                        <Badge
-                                          variant={
-                                            file.status === "added"
-                                              ? "default"
-                                              : file.status === "modified"
-                                                ? "secondary"
-                                                : "destructive"
-                                          }
-                                        >
-                                          {file.status}
-                                        </Badge>
+                      <ScrollArea className="flex-1">
+                        <div className="space-y-3">
+                          {commits.map((commit) => (
+                            <Card key={commit.sha}>
+                              <CardContent className="p-4">
+                                <div className="space-y-3">
+                                  <div className="flex items-start justify-between">
+                                    <div className="space-y-1 flex-1">
+                                      <p className="font-medium">{commit.message}</p>
+                                      <div className="flex items-center space-x-4 text-xs text-muted-foreground">
+                                        <div className="flex items-center space-x-1">
+                                          <User className="h-3 w-3" />
+                                          <span>{commit.author}</span>
+                                        </div>
+                                        <div className="flex items-center space-x-1">
+                                          <Calendar className="h-3 w-3" />
+                                          <span>{formatDate(commit.date)}</span>
+                                        </div>
+                                        <div className="flex items-center space-x-1">
+                                          <GitCommit className="h-3 w-3" />
+                                          <span>{commit.sha.substring(0, 7)}</span>
+                                        </div>
                                       </div>
-                                      {file.filename.endsWith(".json") && (
-                                        <Button
-                                          size="sm"
-                                          onClick={() => handleImportCollection(file.filename)}
-                                          disabled={loading}
-                                        >
-                                          <Download className="w-3 h-3 mr-1" />
-                                          Import
-                                        </Button>
-                                      )}
                                     </div>
-                                  ))}
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => handleImportCollection(commit.sha)}
+                                    >
+                                      <Download className="h-4 w-4 mr-1" />
+                                      Import
+                                    </Button>
+                                  </div>
+
+                                  <Separator />
+
+                                  <div className="flex items-center space-x-6 text-xs">
+                                    <div className="flex items-center space-x-1">
+                                      <FileText className="h-3 w-3" />
+                                      <span>{commit.files_changed} files changed</span>
+                                    </div>
+                                    <div className="flex items-center space-x-1 text-green-600">
+                                      <Plus className="h-3 w-3" />
+                                      <span>{commit.additions} additions</span>
+                                    </div>
+                                    <div className="flex items-center space-x-1 text-red-600">
+                                      <Minus className="h-3 w-3" />
+                                      <span>{commit.deletions} deletions</span>
+                                    </div>
+                                  </div>
                                 </div>
-                              </div>
-                            </div>
-                          </CardContent>
-                        </Card>
-                      ))}
+                              </CardContent>
+                            </Card>
+                          ))}
+                        </div>
+                      </ScrollArea>
+                    </>
+                  ) : (
+                    <div className="h-full flex items-center justify-center">
+                      <div className="text-center">
+                        <GitCommit className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
+                        <p className="text-muted-foreground">Select a branch to view commits</p>
+                      </div>
                     </div>
-                  </ScrollArea>
+                  )}
+                </div>
+              </TabsContent>
+
+              <TabsContent value="sync" className="h-full mt-0">
+                <div className="space-y-6">
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="flex items-center space-x-2">
+                        <Upload className="h-5 w-5" />
+                        <span>Sync Collections to GitHub</span>
+                      </CardTitle>
+                      <CardDescription>Push your API Studio collections to your GitHub repository</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="flex items-center justify-between p-3 bg-muted rounded-lg">
+                        <div>
+                          <p className="font-medium">My API Collections</p>
+                          <p className="text-sm text-muted-foreground">5 collections, 23 requests</p>
+                        </div>
+                        <Button onClick={handleSyncToGitHub}>
+                          <Upload className="h-4 w-4 mr-2" />
+                          Push to GitHub
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="flex items-center space-x-2">
+                        <Download className="h-5 w-5" />
+                        <span>Import from GitHub</span>
+                      </CardTitle>
+                      <CardDescription>Import API collections from your GitHub repositories</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      {selectedRepo && (
+                        <div className="flex items-center justify-between p-3 bg-muted rounded-lg">
+                          <div>
+                            <p className="font-medium">{selectedRepo.name}</p>
+                            <p className="text-sm text-muted-foreground">{selectedBranch?.name || "main"} branch</p>
+                          </div>
+                          <Button variant="outline">
+                            <Download className="h-4 w-4 mr-2" />
+                            Import Collections
+                          </Button>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
                 </div>
               </TabsContent>
             </div>
           </Tabs>
-        </div>
-
-        <div className="flex justify-end pt-4 border-t">
-          <Button onClick={onClose} variant="outline">
-            Close
-          </Button>
-        </div>
-      </DialogContent>
-    </Dialog>
+        )}
+      </div>
+    </div>
   )
 }

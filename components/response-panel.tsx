@@ -1,12 +1,12 @@
 "use client"
 
-import { useState, useRef, useEffect, useMemo } from "react"
+import { useState, useEffect, useRef, useCallback, useMemo } from "react"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { Copy, Search, Download, Eye, Code, Table } from "lucide-react"
+import { Input } from "@/components/ui/input"
+import { Copy, Search, Download, Eye, Code } from "lucide-react"
 import type { ResponseData } from "@/types/api-studio"
 import { toast } from "@/hooks/use-toast"
 
@@ -18,60 +18,82 @@ interface ResponsePanelProps {
 export function ResponsePanel({ response, onResponseUpdate }: ResponsePanelProps) {
   const [searchTerm, setSearchTerm] = useState("")
   const [activeTab, setActiveTab] = useState("body")
+  const [isUserScrolling, setIsUserScrolling] = useState(false)
+  const [lastScrollTop, setLastScrollTop] = useState(0)
   const scrollAreaRef = useRef<HTMLDivElement>(null)
-  const [scrollPosition, setScrollPosition] = useState(0)
+  const userScrollTimeoutRef = useRef<NodeJS.Timeout>()
 
-  // Save scroll position before updates
+  // Handle scroll behavior to prevent auto-scrolling when user is reading
+  const handleScroll = useCallback(
+    (event: Event) => {
+      const target = event.target as HTMLElement
+      const currentScrollTop = target.scrollTop
+
+      // Detect if user is actively scrolling
+      if (Math.abs(currentScrollTop - lastScrollTop) > 5) {
+        setIsUserScrolling(true)
+
+        // Clear existing timeout
+        if (userScrollTimeoutRef.current) {
+          clearTimeout(userScrollTimeoutRef.current)
+        }
+
+        // Reset user scrolling flag after 2 seconds of no scrolling
+        userScrollTimeoutRef.current = setTimeout(() => {
+          setIsUserScrolling(false)
+        }, 2000)
+      }
+
+      setLastScrollTop(currentScrollTop)
+    },
+    [lastScrollTop],
+  )
+
+  // Attach scroll listener
   useEffect(() => {
     const scrollElement = scrollAreaRef.current?.querySelector("[data-radix-scroll-area-viewport]")
+
     if (scrollElement) {
-      const handleScroll = () => {
-        setScrollPosition(scrollElement.scrollTop)
-      }
-      scrollElement.addEventListener("scroll", handleScroll)
-      return () => scrollElement.removeEventListener("scroll", handleScroll)
-    }
-  }, [])
+      scrollElement.addEventListener("scroll", handleScroll, { passive: true })
 
-  // Restore scroll position after updates
+      return () => {
+        scrollElement.removeEventListener("scroll", handleScroll)
+        if (userScrollTimeoutRef.current) {
+          clearTimeout(userScrollTimeoutRef.current)
+        }
+      }
+    }
+  }, [handleScroll])
+
+  // Only restore scroll position if user isn't actively scrolling
   useEffect(() => {
-    if (response) {
-      const scrollElement = scrollAreaRef.current?.querySelector("[data-radix-scroll-area-viewport]")
-      if (scrollElement) {
-        setTimeout(() => {
-          scrollElement.scrollTop = scrollPosition
-        }, 0)
-      }
+    if (response && !isUserScrolling) {
+      requestAnimationFrame(() => {
+        const scrollElement = scrollAreaRef.current?.querySelector("[data-radix-scroll-area-viewport]")
+        if (scrollElement && lastScrollTop > 0) {
+          scrollElement.scrollTop = lastScrollTop
+        }
+      })
     }
-  }, [response, scrollPosition])
+  }, [response, isUserScrolling, lastScrollTop])
 
-  const formatJSON = (jsonString: string) => {
+  const copyToClipboard = useCallback(async (text: string) => {
     try {
-      const parsed = JSON.parse(jsonString)
-      return JSON.stringify(parsed, null, 2)
+      await navigator.clipboard.writeText(text)
+      toast({
+        title: "Copied to clipboard",
+        description: "Response content has been copied to your clipboard.",
+      })
     } catch (error) {
-      return jsonString
-    }
-  }
-
-  const highlightSearchTerm = useMemo(() => {
-    return (text: string, term: string) => {
-      if (!term.trim()) return text
-
-      const regex = new RegExp(`(${term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "gi")
-      return text.replace(regex, '<mark class="bg-yellow-200 dark:bg-yellow-800">$1</mark>')
+      toast({
+        title: "Copy failed",
+        description: "Failed to copy to clipboard. Please try again.",
+        variant: "destructive",
+      })
     }
   }, [])
 
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text)
-    toast({
-      title: "Copied to clipboard",
-      description: "Response content copied successfully",
-    })
-  }
-
-  const downloadResponse = () => {
+  const downloadResponse = useCallback(() => {
     if (!response) return
 
     const blob = new Blob([response.body], { type: "application/json" })
@@ -86,198 +108,133 @@ export function ResponsePanel({ response, onResponseUpdate }: ResponsePanelProps
 
     toast({
       title: "Download started",
-      description: "Response downloaded successfully",
+      description: "Response has been downloaded to your device.",
     })
-  }
+  }, [response])
 
-  const getStatusColor = (status: number) => {
-    if (status >= 200 && status < 300) return "bg-green-500"
-    if (status >= 300 && status < 400) return "bg-yellow-500"
-    if (status >= 400 && status < 500) return "bg-orange-500"
-    if (status >= 500) return "bg-red-500"
-    return "bg-gray-500"
-  }
+  const formatJSON = useCallback((jsonString: string) => {
+    try {
+      const parsed = JSON.parse(jsonString)
+      return JSON.stringify(parsed, null, 2)
+    } catch (error) {
+      return jsonString
+    }
+  }, [])
 
-  const formatSize = (bytes: number) => {
-    if (bytes === 0) return "0 B"
-    const k = 1024
-    const sizes = ["B", "KB", "MB", "GB"]
-    const i = Math.floor(Math.log(bytes) / Math.log(k))
-    return Number.parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i]
-  }
+  const highlightSearchTerm = useCallback((text: string, term: string) => {
+    if (!term.trim()) return text
+
+    const regex = new RegExp(`(${term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "gi")
+    return text.replace(regex, '<mark class="bg-yellow-200 dark:bg-yellow-800">$1</mark>')
+  }, [])
 
   const filteredBody = useMemo(() => {
     if (!response?.body || !searchTerm.trim()) return response?.body || ""
 
     const formattedBody = formatJSON(response.body)
     return highlightSearchTerm(formattedBody, searchTerm)
-  }, [response?.body, searchTerm, highlightSearchTerm])
+  }, [response?.body, searchTerm, formatJSON, highlightSearchTerm])
+
+  const getStatusColor = useCallback((status: number) => {
+    if (status >= 200 && status < 300) return "bg-green-500"
+    if (status >= 300 && status < 400) return "bg-yellow-500"
+    if (status >= 400 && status < 500) return "bg-orange-500"
+    if (status >= 500) return "bg-red-500"
+    return "bg-gray-500"
+  }, [])
+
+  const formatTime = useCallback((time: number) => {
+    if (time < 1000) return `${time}ms`
+    return `${(time / 1000).toFixed(2)}s`
+  }, [])
+
+  const formatSize = useCallback((size: number) => {
+    if (size < 1024) return `${size}B`
+    if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)}KB`
+    return `${(size / (1024 * 1024)).toFixed(1)}MB`
+  }, [])
 
   if (!response) {
     return (
-      <div className="h-full flex items-center justify-center text-muted-foreground">
-        <div className="text-center">
-          <Code className="h-12 w-12 mx-auto mb-4 opacity-50" />
-          <p>Send a request to see the response</p>
+      <div className="h-full flex items-center justify-center border-l bg-muted/30">
+        <div className="text-center text-muted-foreground">
+          <Eye className="h-12 w-12 mx-auto mb-4 opacity-50" />
+          <p className="text-lg font-medium">No Response</p>
+          <p className="text-sm">Send a request to see the response here</p>
         </div>
       </div>
     )
   }
 
   return (
-    <div className="h-full flex flex-col">
+    <div className="h-full flex flex-col border-l">
       {/* Response Header */}
       <div className="border-b p-4 bg-muted/30">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-4">
-            <div className="flex items-center space-x-2">
-              <div className={`w-3 h-3 rounded-full ${getStatusColor(response.status)}`} />
-              <span className="font-medium">
-                {response.status} {response.statusText}
-              </span>
-            </div>
-            <Badge variant="secondary">{response.time}ms</Badge>
-            <Badge variant="outline">{formatSize(response.size)}</Badge>
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center space-x-3">
+            <Badge className={`${getStatusColor(response.status)} text-white`}>
+              {response.status} {response.statusText}
+            </Badge>
+            <span className="text-sm text-muted-foreground">
+              {formatTime(response.time)} • {formatSize(response.size)}
+            </span>
           </div>
 
           <div className="flex items-center space-x-2">
-            <div className="relative">
-              <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search response..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-8 w-64"
-              />
-            </div>
-            <Button size="sm" variant="outline" onClick={() => copyToClipboard(response.body)}>
+            <Button variant="outline" size="sm" onClick={() => copyToClipboard(response.body)}>
               <Copy className="h-4 w-4" />
             </Button>
-            <Button size="sm" variant="outline" onClick={downloadResponse}>
+            <Button variant="outline" size="sm" onClick={downloadResponse}>
               <Download className="h-4 w-4" />
             </Button>
           </div>
+        </div>
+
+        {/* Search */}
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Search in response..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="pl-10"
+          />
         </div>
       </div>
 
       {/* Response Content */}
       <div className="flex-1 min-h-0">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="h-full flex flex-col">
-          <TabsList className="mx-4 mt-4">
-            <TabsTrigger value="body">Body</TabsTrigger>
+          <TabsList className="grid w-full grid-cols-2">
+            <TabsTrigger value="body" className="flex items-center space-x-2">
+              <Code className="h-4 w-4" />
+              <span>Body</span>
+            </TabsTrigger>
             <TabsTrigger value="headers">Headers ({Object.keys(response.headers).length})</TabsTrigger>
-            <TabsTrigger value="preview">Preview</TabsTrigger>
           </TabsList>
 
-          <TabsContent value="body" className="flex-1 min-h-0 mx-4 mb-4">
-            <ScrollArea ref={scrollAreaRef} className="h-full border rounded">
-              <pre className="p-4 text-sm font-mono whitespace-pre-wrap">
-                <code
+          <TabsContent value="body" className="flex-1 min-h-0 mt-0">
+            <ScrollArea ref={scrollAreaRef} className="h-full">
+              <div className="p-4">
+                <pre
+                  className="text-sm font-mono whitespace-pre-wrap break-words"
                   dangerouslySetInnerHTML={{
-                    __html: filteredBody,
+                    __html: searchTerm ? filteredBody : formatJSON(response.body),
                   }}
                 />
-              </pre>
-            </ScrollArea>
-          </TabsContent>
-
-          <TabsContent value="headers" className="flex-1 min-h-0 mx-4 mb-4">
-            <ScrollArea className="h-full border rounded">
-              <div className="p-4">
-                <div className="space-y-2">
-                  {Object.entries(response.headers).map(([key, value]) => (
-                    <div key={key} className="flex items-start space-x-4 py-2 border-b last:border-b-0">
-                      <div className="font-medium text-sm min-w-0 flex-1">
-                        {highlightSearchTerm(key, searchTerm) ? (
-                          <span dangerouslySetInnerHTML={{ __html: highlightSearchTerm(key, searchTerm) }} />
-                        ) : (
-                          key
-                        )}
-                      </div>
-                      <div className="text-sm text-muted-foreground min-w-0 flex-1 break-all">
-                        {highlightSearchTerm(value, searchTerm) ? (
-                          <span dangerouslySetInnerHTML={{ __html: highlightSearchTerm(value, searchTerm) }} />
-                        ) : (
-                          value
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
               </div>
             </ScrollArea>
           </TabsContent>
 
-          <TabsContent value="preview" className="flex-1 min-h-0 mx-4 mb-4">
-            <ScrollArea className="h-full border rounded">
-              <div className="p-4">
-                {(() => {
-                  try {
-                    const jsonData = JSON.parse(response.body)
-
-                    if (Array.isArray(jsonData)) {
-                      return (
-                        <div className="space-y-4">
-                          <div className="flex items-center space-x-2">
-                            <Table className="h-4 w-4" />
-                            <span className="font-medium">Array ({jsonData.length} items)</span>
-                          </div>
-                          <div className="grid gap-2">
-                            {jsonData.slice(0, 10).map((item, index) => (
-                              <div key={index} className="p-3 bg-muted rounded border">
-                                <div className="text-sm font-medium mb-1">Item {index + 1}</div>
-                                <pre className="text-xs text-muted-foreground">{JSON.stringify(item, null, 2)}</pre>
-                              </div>
-                            ))}
-                            {jsonData.length > 10 && (
-                              <div className="text-sm text-muted-foreground text-center py-2">
-                                ... and {jsonData.length - 10} more items
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      )
-                    } else if (typeof jsonData === "object" && jsonData !== null) {
-                      return (
-                        <div className="space-y-4">
-                          <div className="flex items-center space-x-2">
-                            <Eye className="h-4 w-4" />
-                            <span className="font-medium">Object Preview</span>
-                          </div>
-                          <div className="grid gap-3">
-                            {Object.entries(jsonData).map(([key, value]) => (
-                              <div key={key} className="flex items-start space-x-3 p-3 bg-muted rounded border">
-                                <div className="font-medium text-sm min-w-0 flex-shrink-0">{key}:</div>
-                                <div className="text-sm text-muted-foreground min-w-0 flex-1">
-                                  {typeof value === "object" ? (
-                                    <pre className="text-xs">{JSON.stringify(value, null, 2)}</pre>
-                                  ) : (
-                                    <span className="break-all">{String(value)}</span>
-                                  )}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )
-                    } else {
-                      return (
-                        <div className="text-center py-8">
-                          <Code className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
-                          <p className="text-muted-foreground">Primitive value: {String(jsonData)}</p>
-                        </div>
-                      )
-                    }
-                  } catch (error) {
-                    return (
-                      <div className="text-center py-8">
-                        <Code className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
-                        <p className="text-muted-foreground">Raw text response</p>
-                        <pre className="mt-4 p-4 bg-muted rounded text-sm text-left">{response.body}</pre>
-                      </div>
-                    )
-                  }
-                })()}
+          <TabsContent value="headers" className="flex-1 min-h-0 mt-0">
+            <ScrollArea className="h-full">
+              <div className="p-4 space-y-2">
+                {Object.entries(response.headers).map(([key, value]) => (
+                  <div key={key} className="flex items-start space-x-3 py-2 border-b border-border/50">
+                    <span className="font-medium text-sm min-w-0 flex-shrink-0">{key}:</span>
+                    <span className="text-sm text-muted-foreground break-all">{value}</span>
+                  </div>
+                ))}
               </div>
             </ScrollArea>
           </TabsContent>
