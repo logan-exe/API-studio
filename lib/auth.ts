@@ -1,11 +1,25 @@
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs"
 
-const supabase = createClientComponentClient()
+let supabase: ReturnType<typeof createClientComponentClient> | null = null
+
+// Initialize Supabase client safely
+function getSupabaseClient() {
+  if (!supabase) {
+    try {
+      supabase = createClientComponentClient()
+    } catch (error) {
+      console.warn("Failed to initialize Supabase client:", error)
+      return null
+    }
+  }
+  return supabase
+}
 
 export interface User {
   id: string
   email: string
   name: string
+  full_name?: string
   avatar_url?: string
 }
 
@@ -23,6 +37,7 @@ const MOCK_USER: User = {
   id: "local-user-123",
   email: "demo@apistudio.dev",
   name: "Demo User",
+  full_name: "Demo User",
   avatar_url: undefined,
 }
 
@@ -32,13 +47,22 @@ export async function getCurrentUser(): Promise<AuthResponse> {
     return { user: MOCK_USER, error: null }
   }
 
+  const client = getSupabaseClient()
+  if (!client) {
+    return { user: null, error: new Error("Supabase client not available") }
+  }
+
   try {
     const {
       data: { user },
       error,
-    } = await supabase.auth.getUser()
+    } = await client.auth.getUser()
 
     if (error) {
+      // Don't treat missing session as an error for anonymous usage
+      if (error.message.includes("session") || error.message.includes("Auth session missing")) {
+        return { user: null, error: null }
+      }
       return { user: null, error }
     }
 
@@ -50,12 +74,15 @@ export async function getCurrentUser(): Promise<AuthResponse> {
       id: user.id,
       email: user.email || "",
       name: user.user_metadata?.name || user.email?.split("@")[0] || "User",
+      full_name: user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split("@")[0] || "User",
       avatar_url: user.user_metadata?.avatar_url,
     }
 
     return { user: mappedUser, error: null }
   } catch (error) {
-    return { user: null, error: error as Error }
+    // Handle any unexpected errors gracefully
+    console.warn("Auth check failed:", error)
+    return { user: null, error: null }
   }
 }
 
@@ -66,8 +93,13 @@ export async function signIn(email: string, password: string): Promise<AuthRespo
     return { user: MOCK_USER, error: null }
   }
 
+  const client = getSupabaseClient()
+  if (!client) {
+    return { user: null, error: new Error("Supabase client not available") }
+  }
+
   try {
-    const { data, error } = await supabase.auth.signInWithPassword({
+    const { data, error } = await client.auth.signInWithPassword({
       email,
       password,
     })
@@ -84,6 +116,8 @@ export async function signIn(email: string, password: string): Promise<AuthRespo
       id: data.user.id,
       email: data.user.email || "",
       name: data.user.user_metadata?.name || data.user.email?.split("@")[0] || "User",
+      full_name:
+        data.user.user_metadata?.full_name || data.user.user_metadata?.name || data.user.email?.split("@")[0] || "User",
       avatar_url: data.user.user_metadata?.avatar_url,
     }
 
@@ -97,16 +131,22 @@ export async function signUp(email: string, password: string, name: string): Pro
   if (isLocalEnvironment()) {
     // In local development, simulate successful sign up
     await new Promise((resolve) => setTimeout(resolve, 1500))
-    return { user: { ...MOCK_USER, name, email }, error: null }
+    return { user: { ...MOCK_USER, name, full_name: name, email }, error: null }
+  }
+
+  const client = getSupabaseClient()
+  if (!client) {
+    return { user: null, error: new Error("Supabase client not available") }
   }
 
   try {
-    const { data, error } = await supabase.auth.signUp({
+    const { data, error } = await client.auth.signUp({
       email,
       password,
       options: {
         data: {
           name,
+          full_name: name,
         },
       },
     })
@@ -123,6 +163,7 @@ export async function signUp(email: string, password: string, name: string): Pro
       id: data.user.id,
       email: data.user.email || "",
       name: name,
+      full_name: name,
       avatar_url: data.user.user_metadata?.avatar_url,
     }
 
@@ -139,8 +180,13 @@ export async function signInWithGoogle(): Promise<AuthResponse> {
     return { user: MOCK_USER, error: null }
   }
 
+  const client = getSupabaseClient()
+  if (!client) {
+    return { user: null, error: new Error("Supabase client not available") }
+  }
+
   try {
-    const { data, error } = await supabase.auth.signInWithOAuth({
+    const { data, error } = await client.auth.signInWithOAuth({
       provider: "google",
       options: {
         redirectTo: `${window.location.origin}/auth/callback`,
@@ -165,8 +211,13 @@ export async function resetPassword(email: string): Promise<{ error: Error | nul
     return { error: null }
   }
 
+  const client = getSupabaseClient()
+  if (!client) {
+    return { error: new Error("Supabase client not available") }
+  }
+
   try {
-    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+    const { error } = await client.auth.resetPasswordForEmail(email, {
       redirectTo: `${window.location.origin}/auth/reset-password`,
     })
 
@@ -182,8 +233,13 @@ export async function signOut(): Promise<{ error: Error | null }> {
     return { error: null }
   }
 
+  const client = getSupabaseClient()
+  if (!client) {
+    return { error: new Error("Supabase client not available") }
+  }
+
   try {
-    const { error } = await supabase.auth.signOut()
+    const { error } = await client.auth.signOut()
     return { error }
   } catch (error) {
     return { error: error as Error }

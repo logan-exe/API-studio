@@ -92,13 +92,16 @@ export default function APIStudio() {
       const { user: currentUser, error } = await getCurrentUser()
 
       if (error) {
-        console.error("Auth error:", error)
+        console.warn("Auth warning:", error.message)
+        // Don't show error to user for auth issues, just continue as anonymous
       }
 
       setUser(currentUser)
-      setLoading(false)
     } catch (error) {
-      console.error("Auth check failed:", error)
+      console.warn("Auth check failed:", error)
+      // Continue as anonymous user
+      setUser(null)
+    } finally {
       setLoading(false)
     }
   }
@@ -433,13 +436,23 @@ export default function APIStudio() {
 
   // Helper function to get user initials safely
   const getUserInitials = (user: AuthUser) => {
-    if (!user.full_name) return "U"
-    return user.full_name
-      .split(" ")
-      .map((n) => n[0])
-      .join("")
-      .toUpperCase()
-      .slice(0, 2)
+    if (user.full_name) {
+      return user.full_name
+        .split(" ")
+        .map((n) => n[0])
+        .join("")
+        .toUpperCase()
+        .slice(0, 2)
+    }
+    if (user.name) {
+      return user.name
+        .split(" ")
+        .map((n) => n[0])
+        .join("")
+        .toUpperCase()
+        .slice(0, 2)
+    }
+    return user.email?.charAt(0).toUpperCase() || "U"
   }
 
   // Helper function to get default avatar
